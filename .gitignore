@@ -12,3 +12,6 @@ build/
 out/
 cts-reports/
 .pytest_cache/
+
+# Claude directory
+.claude
