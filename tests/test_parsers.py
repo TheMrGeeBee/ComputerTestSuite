@@ -331,6 +331,30 @@ def test_wear_placeholder_255_uses_the_vendor_attribute():
     assert drive_life(data)["wear_used_pct"] == 255
 
 
+def test_drive_events():
+    from computertestsuite.suites.storage import drive_events, format_events
+
+    def stat(name, value):
+        return {"name": name, "value": value, "flags": {"valid": True}}
+    intel = {"ata_smart_attributes": {"table": [_attr(174, "Unexpect_Power_Loss_Ct", 100, 3517),
+                                                _attr(192, "Power-Off_Retract_Count", 100, 3517),
+                                                _attr(199, "UDMA_CRC_Error_Count", 100, 0)]},
+             "ata_device_statistics": {"pages": [{"number": 6, "table": [
+                 stat("Number of Hardware Resets", 25016), stat("Number of ASR Events", 19848),
+                 stat("Number of Interface CRC Errors", 0)]}]}}
+    ev = drive_events(intel)
+    assert ev == {"power_losses": 3517, "link_resets": 25016, "link_recoveries": 19848, "crc_errors": 0}
+    assert format_events(ev, 3936) == ("3517 unexpected power losses of 3936 power-ons; "
+                                       "SATA link: 25016 resets, 19848 recoveries, 0 transfer (CRC) errors")
+    # Hard disk without device statistics: CRC errors from the attribute, with a hint.
+    hdd = {"ata_smart_attributes": {"table": [_attr(192, "Power-Off_Retract_Count", 100, 40),
+                                              _attr(199, "UDMA_CRC_Error_Count", 200, 12)]}}
+    assert drive_events(hdd) == {"power_losses": 40, "crc_errors": 12}
+    assert "bad SATA cable" in format_events(drive_events(hdd))
+    assert drive_events({"nvme_smart_health_information_log": {"unsafe_shutdowns": 9}}) == {"power_losses": 9}
+    assert format_events({}) == ""
+
+
 def test_worn_ssd_is_a_warning():
     data = {"smart_status": {"passed": True},
             "ata_smart_attributes": {"table": [_attr(233, "Media_Wearout_Indicator", 8, 0)]}}

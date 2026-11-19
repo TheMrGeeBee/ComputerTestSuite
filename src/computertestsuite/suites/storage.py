@@ -143,6 +143,48 @@ def drive_life(data: dict[str, Any]) -> dict[str, Any]:
     return life
 
 
+# Attributes counting power cuts without a proper shutdown, by preference. Matched by name, since
+# e.g. 192 means "unsafe shutdowns" on some SSDs and "emergency head retracts" on hard disks.
+ATA_POWER_LOSS_ATTRS = ("Unexpect_Power_Loss_Ct", "Unsafe_Shutdown_Count", "POR_Recovery_Count",
+                        "Power-Off_Retract_Count")
+
+
+def drive_events(data: dict[str, Any]) -> dict[str, int]:
+    """History worth knowing when judging a used drive (information, not a verdict):
+    unexpected power losses and SATA link resets, recoveries and transfer (CRC) errors."""
+    ev: dict[str, int] = {}
+    nv = data.get("nvme_smart_health_information_log") or {}
+    names = {a.get("name"): a for a in data.get("ata_smart_attributes", {}).get("table", [])}
+    if "unsafe_shutdowns" in nv:
+        ev["power_losses"] = int(nv["unsafe_shutdowns"])
+    else:
+        for name in ATA_POWER_LOSS_ATTRS:
+            if name in names:
+                ev["power_losses"] = int(names[name].get("raw", {}).get("value", 0))
+                break
+    for key, stat in (("link_resets", "Number of Hardware Resets"), ("link_recoveries", "Number of ASR Events"),
+                      ("crc_errors", "Number of Interface CRC Errors")):
+        if (v := _devstat(data, 6, stat)) is not None:
+            ev[key] = v
+    if "crc_errors" not in ev and "UDMA_CRC_Error_Count" in names:
+        ev["crc_errors"] = int(names["UDMA_CRC_Error_Count"].get("raw", {}).get("value", 0))
+    return ev
+
+
+def format_events(ev: dict[str, int], power_cycles: int | None = None) -> str:
+    parts = []
+    if "power_losses" in ev:
+        of = f" of {power_cycles} power-ons" if power_cycles else ""
+        parts.append(f"{ev['power_losses']} unexpected power losses{of}")
+    link = [f"{ev[k]} {label}" for k, label in (("link_resets", "resets"), ("link_recoveries", "recoveries"),
+                                                 ("crc_errors", "transfer (CRC) errors")) if k in ev]
+    if link:
+        parts.append("SATA link: " + ", ".join(link))
+    if ev.get("crc_errors"):
+        parts.append("CRC errors usually mean a bad SATA cable or connector")
+    return "; ".join(parts)
+
+
 def format_life(life: dict[str, Any]) -> str:
     parts = []
     if "power_on_hours" in life:
@@ -299,8 +341,11 @@ class StorageSmart(StressTest):
             for status, msg in evaluate_smart(data, d.path):
                 result.add(status, msg)
             result.metrics[f"{d.path}.smart"] = smart_counters(data) or "n/a"
-            if life := format_life(drive_life(data)):
-                result.metrics[f"{d.path}.life"] = life
+            life = drive_life(data)
+            if text := format_life(life):
+                result.metrics[f"{d.path}.life"] = text
+            if text := format_events(drive_events(data), life.get("power_cycles")):
+                result.metrics[f"{d.path}.history"] = text
             temp = data.get("temperature", {}).get("current")
             if temp is not None:
                 result.metrics[f"{d.path}.temp_c"] = temp

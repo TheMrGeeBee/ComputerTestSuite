@@ -18,7 +18,7 @@ while the test runs.
 
 | Test             | Subsystem | What it does                                                                      |
 |------------------|-----------|-----------------------------------------------------------------------------------|
-| `storage-smart`  | storage   | SMART/NVMe health and error counters; age (power-on hours, power cycles) and, for SSDs, wear and data written (WARN from 90% of the rated endurance used); a short drive self-test (standard/burnin) |
+| `storage-smart`  | storage   | SMART/NVMe health and error counters; age (power-on hours, power cycles) and, for SSDs, wear and data written (WARN from 90% of the rated endurance used); unexpected power losses and SATA link resets/CRC errors (information); a short drive self-test (standard/burnin) |
 | `cpu`            | cpu       | Every stress-ng CPU method on all threads, then matrix/FPU math, results verified |
 | `memory-pattern` | memory    | memtester bit-pattern tests over almost all free RAM                              |
 | `memory-stress`  | memory    | stress-ng VM stressors (all methods) with data verification                       |
