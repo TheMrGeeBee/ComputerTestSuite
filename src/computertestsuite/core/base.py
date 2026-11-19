@@ -16,7 +16,7 @@ from .model import TestResult
 class StressTest(ABC):
     #: Unique short identifier, used with --only / --exclude.
     name: ClassVar[str]
-    #: Subsystem group (cpu, memory, storage, gpu, network, usb, system).
+    #: Subsystem group (cpu, memory, storage, gpu, network, usb, power, system).
     subsystem: ClassVar[str]
     description: ClassVar[str] = ""
     #: Binaries that must be on PATH.

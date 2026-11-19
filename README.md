@@ -18,6 +18,7 @@ while the test runs.
 
 | Test             | Subsystem | What it does                                                                      |
 |------------------|-----------|-----------------------------------------------------------------------------------|
+| `battery`        | power     | Laptops: health (capacity left vs. new, WARN below 60%), charge cycles, charging; unplugged: idle and full-load drain with estimated runtime, sudden charge drops (runs first) |
 | `storage-smart`  | storage   | SMART/NVMe health and error counters; age (power-on hours, power cycles) and, for SSDs, wear and data written (WARN from 90% of the rated endurance used); unexpected power losses and SATA link resets/CRC errors (information); a short drive self-test (standard/burnin) |
 | `cpu`            | cpu       | Every stress-ng CPU method on all threads, then matrix/FPU math, results verified |
 | `memory-pattern` | memory    | memtester bit-pattern tests over almost all free RAM                              |
@@ -87,6 +88,14 @@ if a test runs over, until the test finishes. Tests that can't run on the machin
 skipped, with the reason. The boot menu's **CTS auto-run** entries open the interface and start
 their profile after a 10-second countdown; any key cancels it. The destructive disk test is
 only available from the command line.
+
+### Battery
+The `battery` test always reports how much charge the battery still holds compared with new, its
+charge cycles (when the battery reports them) and whether it charges. To also measure runtime,
+unplug the charger before starting: the test runs first, measures the power draw for a minute at
+idle and then under full CPU load (up to 10 minutes), and estimates the runtime on a full charge
+for both. It stops early at 15% charge and needs at least 30% to start. A charge level that drops
+several percent within seconds is reported as a weak cell. Plug the charger back in afterwards.
 
 ### Wi-Fi
 The `wifi` test always checks that the adapter's driver and firmware loaded, that the radio is
