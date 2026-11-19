@@ -16,7 +16,11 @@ import re
 import sys
 from pathlib import Path
 
-AUTORUN = [("standard", "CTS auto-run: standard (~2-3 h)"), ("burnin", "CTS auto-run: burn-in (endurance, many hours)")]
+AUTORUN = [
+    ("quick", "CTS auto-run: quick (~15-20 min)"),
+    ("standard", "CTS auto-run: standard (~2-3 h)"),
+    ("burnin", "CTS auto-run: burn-in (endurance, many hours)"),
+]
 
 
 def warn(msg: str) -> None:

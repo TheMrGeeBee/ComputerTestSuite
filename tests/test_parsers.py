@@ -182,3 +182,27 @@ def test_iperf():
     assert err == "" and bps == 9.4e8
     bps, err = iperf_bps(json.dumps({"error": "unable to connect to server"}))
     assert bps == 0 and "unable" in err
+
+
+def test_quick_profile_fits_15_to_20_minutes():
+    """Rough budget of the default selection on a machine with one disk and a GPU."""
+    from computertestsuite.core.profiles import PROFILES
+
+    q = PROFILES["quick"]
+    timed_tests = 5  # cpu, memory-pattern, memory-stress, storage-read (shared budget), gpu
+    fixed = 15 + 10 + 30  # storage-smart, network (no iperf), usb
+    total = timed_tests * q.test_seconds + q.system_seconds + fixed
+    assert 15 * 60 <= total <= 20 * 60, total
+
+
+def test_storage_read_shares_budget_in_quick():
+    from computertestsuite.core.context import RunContext
+    from computertestsuite.core.profiles import PROFILES
+    from computertestsuite.suites.storage import StorageRead
+
+    ctx = RunContext(profile=PROFILES["quick"])
+    assert StorageRead._per_disk_seconds(ctx, 2) * 2 <= ctx.seconds
+    assert StorageRead._per_disk_seconds(ctx, 6) * 6 <= max(ctx.seconds, 30 * 6)
+    assert StorageRead._per_disk_seconds(ctx, 20) == 30  # floor per disk
+    ctx = RunContext(profile=PROFILES["standard"])
+    assert StorageRead._per_disk_seconds(ctx, 6) == ctx.seconds  # standard: per disk

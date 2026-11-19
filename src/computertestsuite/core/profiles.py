@@ -17,10 +17,11 @@ class Profile:
     memory_loops: int  # memtester loops
     surface_scan: bool  # full read-only surface scan of disks
     system_seconds: int  # combined full-system burn-in duration
+    shared_disk_budget: bool = False  # storage-read: test_seconds is split across all disks
 
 
 PROFILES: dict[str, Profile] = {
-    "quick": Profile("quick", "Smoke test, about 2 minutes per test", 120, 1, False, 120),
+    "quick": Profile("quick", "Short check, about 15-20 minutes in total", 150, 1, False, 180, True),
     "standard": Profile("standard", "About 15 minutes per test, full disk read scan", 900, 2, True, 1800),
     "burnin": Profile("burnin", "Endurance: 1 hour per test, 4 hours combined load", 3600, 4, True, 14400),
 }

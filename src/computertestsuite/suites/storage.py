@@ -230,19 +230,27 @@ class StorageRead(StressTest):
             # assume ~200 MB/s for HDD/USB, 1 GB/s for SSD
             return int(sum(d.size / (2e8 if d.rotational or d.is_usb else 1e9) for d in disks)
                        + len(disks) * ctx.seconds * 0.4)
-        return ctx.seconds * len(disks)
+        return self._per_disk_seconds(ctx, len(disks)) * len(disks)
+
+    @staticmethod
+    def _per_disk_seconds(ctx: RunContext, n_disks: int) -> int:
+        """Time per disk for the time-limited (non-full-scan) mode."""
+        if ctx.profile.shared_disk_budget and ctx.duration is None and n_disks:
+            return max(30, ctx.seconds // n_disks)
+        return ctx.seconds
 
     def run(self, ctx: RunContext, result: TestResult) -> None:
         disks = _targets(ctx)
         delta = _SmartDelta(disks)
         log = ctx.log_path(self.name)
         full = ctx.profile.surface_scan and ctx.duration is None
+        secs = self._per_disk_seconds(ctx, len(disks))
         for d in disks:
             if proc.ABORT.is_set():
                 break
             common = [f"--filename={d.path}", "--readonly", "--direct=1", "--ioengine=libaio",
                       "--group_reporting", "--name=" + d.name]
-            seq_secs = int(ctx.seconds * 0.6)
+            seq_secs = int(secs * 0.6)
             seq = ["--rw=read", "--bs=1M", "--iodepth=16"]
             if full:
                 seq_timeout = d.size / 2e7 + 600  # generous: 20 MB/s minimum
@@ -253,7 +261,7 @@ class StorageRead(StressTest):
             result.metrics[f"{d.path}.seq_read"] = f"{s['read_gib']} GiB at {s['read_mib_s']} MiB/s" + (
                 " (full surface)" if full else "")
 
-            rnd_secs = max(10, ctx.seconds - seq_secs)
+            rnd_secs = max(10, secs - seq_secs)
             rnd = ["--rw=randread", "--bs=4k", "--iodepth=32", "--numjobs=4",
                    f"--runtime={rnd_secs}", "--time_based=1"]
             s = run_fio(common + rnd, rnd_secs + 120, log, result, f"{d.path} random read")

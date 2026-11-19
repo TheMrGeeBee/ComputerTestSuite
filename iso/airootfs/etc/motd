@@ -3,7 +3,7 @@
 
     cts info                       hardware inventory
     cts list                       which tests can run on this machine
-    cts run                        quick smoke test (~2 min per test)
+    cts run                        quick check, about 15-20 minutes
     cts run --profile standard     ~15 min per test, full disk read scan
     cts run --profile burnin       endurance: 1 h per test + 4 h combined load
     cts run --only cpu,memory      run selected tests or subsystems

@@ -33,13 +33,14 @@ The boot menu also keeps archiso's **Memtest86+** entries, which test RAM before
 
 ### Profiles
 
-| Profile    | Per test   | Combined `system` load | Disks                    |
-|------------|------------|------------------------|--------------------------|
-| `quick`    | 2 min      | 2 min                  | time-limited read sample |
-| `standard` | 15 min     | 30 min                 | full surface read        |
-| `burnin`   | 1 h        | 4 h                    | full surface read        |
+| Profile    | Total time  | Per test | Combined `system` load | Disks                                       |
+|------------|-------------|----------|------------------------|---------------------------------------------|
+| `quick`    | 15–20 min   | 2.5 min  | 3 min                  | 2.5 min read sample, shared across all disks |
+| `standard` | ~2–3 h      | 15 min   | 30 min                 | full surface read                           |
+| `burnin`   | many hours  | 1 h      | 4 h                    | full surface read                           |
 
-`--duration` overrides the per-test time for any profile.
+`quick` is the default for `cts run`. `--duration` overrides the per-test time for any profile.
+Each profile has its own "CTS auto-run" entry in the boot menu.
 
 ### Verdicts
 - **FAIL**: a verification or tool failure; MCE, uncorrectable EDAC or PCIe errors; disk I/O errors; a SMART health failure or growing bad-sector counters; a GPU hang; a sensor at or above its critical temperature.
@@ -63,7 +64,7 @@ cts report                                # show the last report again
 
 Pressing Ctrl+C stops the current test and still writes the report. Press it twice to kill everything.
 
-To start a run automatically, pick **CTS auto-run: standard** or **CTS auto-run: burn-in** in the
+To start a run automatically, pick **CTS auto-run: quick**, **standard** or **burn-in** in the
 boot menu, or add `cts.autorun=<profile>` to the kernel command line.
 
 **Keyboard layout:** at login, cts asks which layout to use (Swedish, US, UK, Nordic, German and
