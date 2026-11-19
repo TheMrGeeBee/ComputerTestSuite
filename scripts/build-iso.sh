@@ -60,6 +60,13 @@ trap cleanup EXIT
 mkdir -p "$BUILD" "$OUT"
 cp -a "$RELENG" "$PROFILE"
 
+# Own package cache: a host such as CachyOS caches its own rebuilds under the same file
+# names as Arch's packages, which then fail Arch's signature check (seen with dkms).
+PKG_CACHE="${CTS_PKG_CACHE:-/var/cache/cts-archiso-pkg}"
+mkdir -p "$PKG_CACHE"
+sed -i "s|^#\?CacheDir.*|CacheDir    = $PKG_CACHE/|" "$PROFILE/pacman.conf"
+grep -q "^CacheDir    = $PKG_CACHE/" "$PROFILE/pacman.conf" || die "could not set CacheDir in the profile's pacman.conf"
+
 echo "==> Packages"
 {
   cat "$RELENG/packages.x86_64"

@@ -195,6 +195,8 @@ sudo dd if=out/cts-*.iso of=/dev/sdX bs=4M conv=fsync oflag=direct status=progre
 4. copies `src/computertestsuite` to `/opt/cts`
 5. runs `scripts/patch_boot.py` to add the auto-run boot entries
 6. runs `mkarchiso` with its work dir in `/var/tmp/cts-archiso-work` (set `CTS_WORK_DIR` to change it)
+   and its own package cache in `/var/cache/cts-archiso-pkg` (`CTS_PKG_CACHE`), so packages from
+   a derivative host such as CachyOS never mix with Arch's
 
 Keep the work dir outside the project. It holds a full root filesystem with `/proc` and `/sys`
 bind-mounted into it, and an IDE that indexes it can freeze.
