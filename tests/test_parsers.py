@@ -312,15 +312,33 @@ def test_wifi_hardware_discovery(tmp_path):
     assert wifi_interfaces(net) == ["wlan0"]
     pci = tmp_path / "pci"
     (pci / "0000:00:14.3").mkdir(parents=True)
-    (pci / "0000:00:14.3" / "class").write_text("0x028000\n")
+    for k, v in {"class": "0x028000", "vendor": "0x14e4", "device": "0x4365",
+                 "modalias": "pci:v000014E4d00004365sv000017AAsd0000061Bbc02sc80i00"}.items():
+        (pci / "0000:00:14.3" / k).write_text(v + "\n")
     (pci / "0000:00:1f.6").mkdir()
     (pci / "0000:00:1f.6" / "class").write_text("0x020000\n")
-    assert wifi_pci_devices(pci) == [{"slot": "0000:00:14.3", "driver": ""}]
+    assert wifi_pci_devices(pci) == [{"slot": "0000:00:14.3", "id": "14e4:4365",
+                                      "modalias": "pci:v000014E4d00004365sv000017AAsd0000061Bbc02sc80i00",
+                                      "driver": ""}]
     rf = tmp_path / "rfkill" / "rfkill0"
     rf.mkdir(parents=True)
     for k, v in {"type": "wlan", "name": "phy0", "soft": "0", "hard": "1"}.items():
         (rf / k).write_text(v + "\n")
     assert rfkill_wlan(tmp_path / "rfkill") == [{"name": "phy0", "soft": False, "hard": True}]
+
+
+def test_wifi_missing_driver_verdict():
+    """No driver on the stick for the chip is not a hardware fault; a driver that fails is."""
+    from computertestsuite.suites.wifi import missing_driver_verdict
+
+    broadcom = {"slot": "0000:02:00.0", "id": "14e4:4365", "modalias": "pci:x", "driver": ""}
+    status, msg = missing_driver_verdict(broadcom, [])
+    assert status == Status.SKIP and "'wl' driver" in msg
+    intel = {"slot": "0000:00:14.3", "id": "8086:a370", "modalias": "pci:y", "driver": ""}
+    status, msg = missing_driver_verdict(intel, [])
+    assert status == Status.SKIP and "'wl'" not in msg
+    assert missing_driver_verdict(intel, ["iwlwifi"])[0] == Status.FAIL
+    assert missing_driver_verdict({**intel, "driver": "iwlwifi"}, ["iwlwifi"])[0] == Status.FAIL
 
 
 def _monitor_with_temp(tmp_path, milli_c):

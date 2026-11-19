@@ -42,19 +42,52 @@ def wifi_interfaces(root: Path = SYS_NET) -> list[str]:
 
 
 def wifi_pci_devices(root: Path = Path("/sys/bus/pci/devices")) -> list[dict[str, str]]:
-    """PCI network controllers of class 0x0280 (wireless), with their kernel driver."""
+    """PCI network controllers of class 0x0280 (wireless): slot, vendor:device id, modalias, kernel driver."""
     out = []
     if not root.is_dir():
         return out
-    for dev in sorted(root.iterdir()):
+
+    def rd(path: Path) -> str:
         try:
-            cls = (dev / "class").read_text().strip()
+            return path.read_text().strip()
         except OSError:
-            continue
-        if cls.startswith("0x0280"):
+            return ""
+
+    for dev in sorted(root.iterdir()):
+        if rd(dev / "class").startswith("0x0280"):
             drv = dev / "driver"
-            out.append({"slot": dev.name, "driver": os.path.basename(os.readlink(drv)) if drv.is_symlink() else ""})
+            out.append({
+                "slot": dev.name,
+                "id": f"{rd(dev / 'vendor').removeprefix('0x')}:{rd(dev / 'device').removeprefix('0x')}",
+                "modalias": rd(dev / "modalias"),
+                "driver": os.path.basename(os.readlink(drv)) if drv.is_symlink() else "",
+            })
     return out
+
+
+def driver_modules(modalias: str) -> list[str]:
+    """Kernel modules on this system that claim a device (empty: Linux on this stick has no driver for it)."""
+    if not modalias or not proc.have("modprobe"):
+        return []
+    return proc.capture(["modprobe", "--resolve-alias", modalias], timeout=10).split()
+
+
+# Chips that only Broadcom's proprietary "wl" driver supports; the open drivers (brcmfmac, b43) do not.
+WL_ONLY_HINT = ("Broadcom chips like this one need Broadcom's proprietary 'wl' driver (broadcom-wl), "
+                "which is not on the stick")
+
+
+def missing_driver_verdict(dev: dict[str, str], modules: list[str]) -> tuple[Status, str]:
+    """Verdict for a Wi-Fi PCI device that has no network interface."""
+    where = f"Wi-Fi chip {dev['id']} at {dev['slot']}"
+    if dev["driver"]:
+        return Status.FAIL, (f"{where}: driver {dev['driver']} is loaded but created no Wi-Fi interface "
+                             "(firmware missing or failed; see kernel log)")
+    if modules:
+        return Status.FAIL, (f"{where}: driver {', '.join(modules)} exists but did not take the device "
+                             "(load or probe failed; see kernel log)")
+    hint = f"; {WL_ONLY_HINT}" if dev["id"].startswith("14e4:") else ""
+    return Status.SKIP, f"{where}: no Linux driver for this chip on the stick, Wi-Fi not tested{hint}"
 
 
 def interface_driver(iface: str, root: Path = SYS_NET) -> str:
@@ -249,9 +282,12 @@ class Wifi(StressTest):
         ifaces = wifi_interfaces()
         pci = wifi_pci_devices()
         if pci and not ifaces:
-            drivers = ", ".join(d["driver"] or "no driver" for d in pci)
-            result.add(Status.FAIL, f"Wi-Fi hardware found ({drivers}) but no Wi-Fi interface: "
-                                    "driver or firmware failed to load (see kernel log)")
+            with open(ctx.log_path(self.name), "a") as f:
+                for dev in pci:
+                    modules = driver_modules(dev["modalias"])
+                    f.write(f"{dev['slot']} {dev['id']} modalias={dev['modalias']} bound driver="
+                            f"{dev['driver'] or '-'} matching modules={', '.join(modules) or '-'}\n")
+                    result.add(*missing_driver_verdict(dev, modules))
             return
         for rf in rfkill_wlan():
             if rf["hard"]:

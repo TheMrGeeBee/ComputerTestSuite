@@ -9,6 +9,7 @@ import signal
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from . import proc
@@ -126,6 +127,9 @@ class Runner:
         if ws.kernel_events:
             res.metrics["kernel_events"] = ws.kernel_events
         res.metrics.update(ws.info)
+        log = Path(res.log_file)
+        if not log.exists() and not any(log.parent.glob(f"{log.stem}.*.log")):
+            res.log_file = ""  # the test had nothing to log; don't point the report at a missing file
         if self.aborted:
             res.add(Status.ERROR, "aborted by user")
         self.listener.test_finished(test, res)
