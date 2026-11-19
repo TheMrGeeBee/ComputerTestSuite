@@ -1,0 +1,7 @@
+{"device": {"name": "/dev/sda", "protocol": "ATA"},
+ "smart_support": {"available": true, "enabled": true},
+ "smart_status": {"passed": false},
+ "ata_smart_attributes": {"table": [
+   {"id": 5, "name": "Reallocated_Sector_Ct", "raw": {"value": 120}},
+   {"id": 197, "name": "Current_Pending_Sector", "raw": {"value": 8}}]},
+ "ata_smart_error_log": {"summary": {"count": 3}}}

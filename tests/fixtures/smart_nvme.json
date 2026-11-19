@@ -1,0 +1,6 @@
+{"device": {"name": "/dev/nvme0n1", "protocol": "NVMe"},
+ "smart_status": {"passed": true},
+ "nvme_smart_health_information_log": {"critical_warning": 0, "temperature": 40, "available_spare": 100,
+   "available_spare_threshold": 10, "percentage_used": 3, "media_errors": 2, "num_err_log_entries": 7},
+ "nvme_self_test_log": {"current_self_test_operation": {"value": 0, "string": "No self-test in progress"},
+   "table": [{"self_test_code": {"value": 1}, "self_test_result": {"value": 0, "string": "Completed without error"}}]}}

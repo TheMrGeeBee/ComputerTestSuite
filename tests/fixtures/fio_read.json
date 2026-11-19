@@ -1,0 +1,4 @@
+{"fio version": "fio-3.38",
+ "jobs": [{"jobname": "sda", "error": 0,
+   "read": {"io_bytes": 32212254720, "bw": 512000, "iops": 500.0},
+   "write": {"io_bytes": 0, "bw": 0, "iops": 0.0}}]}

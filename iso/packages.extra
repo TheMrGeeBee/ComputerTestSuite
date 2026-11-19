@@ -1,0 +1,29 @@
+# Extra packages added to the archiso "releng" package list.
+# Runtime
+python
+# CPU / memory
+stress-ng
+memtester
+# Storage
+fio
+smartmontools
+nvme-cli
+hdparm
+e2fsprogs
+# Sensors / inventory
+lm_sensors
+dmidecode
+pciutils
+usbutils
+lshw
+# GPU (Mesa: AMD, Intel, NVIDIA via nouveau)
+mesa
+vulkan-radeon
+vulkan-intel
+vulkan-nouveau
+vulkan-tools
+glmark2
+vkmark
+# Network
+ethtool
+iperf3

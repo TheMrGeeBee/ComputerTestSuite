@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 TheMrGeeBee
+
+# ComputerTestSuite: auto-start a profile when booted with cts.autorun=<profile>
+if [[ $(tty) == /dev/tty1 ]] && command -v cts >/dev/null; then
+    cts autorun
+fi

@@ -1,0 +1,17 @@
+
+  ComputerTestSuite: live hardware stress-test system
+
+    cts info                       hardware inventory
+    cts list                       which tests can run on this machine
+    cts run                        quick smoke test (~2 min per test)
+    cts run --profile standard     ~15 min per test, full disk read scan
+    cts run --profile burnin       endurance: 1 h per test + 4 h combined load
+    cts run --only cpu,memory      run selected tests or subsystems
+    cts run --iperf-server HOST    include network throughput (run 'iperf3 -s' on HOST)
+    cts report                     show the last report
+
+  Disk tests are read-only. Destructive write test (ERASES the disk):
+    cts run --only storage --destructive --device /dev/sdX
+
+  Ctrl+C stops the current test and still writes the report.
+
