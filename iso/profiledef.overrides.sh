@@ -9,4 +9,5 @@ iso_publisher="ComputerTestSuite"
 iso_application="ComputerTestSuite live stress-test system"
 file_permissions+=(
   ["/usr/local/bin/cts"]="0:0:755"
+  ["/usr/local/bin/cts-keymap"]="0:0:755"
 )

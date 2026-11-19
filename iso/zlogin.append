@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 TheMrGeeBee
 
-# ComputerTestSuite: auto-start a profile when booted with cts.autorun=<profile>
+# ComputerTestSuite: pick the keyboard layout (once per boot), then
+# auto-start a profile when booted with cts.autorun=<profile>
 if [[ $(tty) == /dev/tty1 ]] && command -v cts >/dev/null; then
+    cts-keymap --auto
     cts autorun
 fi

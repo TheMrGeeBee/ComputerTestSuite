@@ -14,5 +14,5 @@
     cts run --only storage --destructive --device /dev/sdX
 
   Ctrl+C stops the current test and still writes the report.
-  Keyboard is Swedish (sv-latin1). Other layout: loadkeys us
+  Keyboard layout is chosen at login (default Swedish). Change it: cts-keymap
 

@@ -66,6 +66,12 @@ Pressing Ctrl+C stops the current test and still writes the report. Press it twi
 To start a run automatically, pick **CTS auto-run: standard** or **CTS auto-run: burn-in** in the
 boot menu, or add `cts.autorun=<profile>` to the kernel command line.
 
+**Keyboard layout:** at login, cts asks which layout to use (Swedish, US, UK, Nordic, German and
+more, or any keymap name). Press Enter, or wait 10 seconds, to keep the default Swedish layout
+(`sv-latin1`). Run `cts-keymap` to change it later. To skip the question, add
+`cts.keymap=<map>` (e.g. `cts.keymap=us`) to the kernel command line. Auto-run also waits for
+this choice.
+
 ### Destructive disk test
 ```
 cts run --only storage --destructive --device /dev/sdX

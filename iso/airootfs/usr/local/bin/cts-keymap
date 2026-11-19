@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 TheMrGeeBee
+#
+# Choose the console keyboard layout. Runs once per boot from root's .zlogin on tty1;
+# run it again any time with: cts-keymap
+#
+# Kernel command line overrides (skip the prompt):
+#   cts.keymap=<map>      e.g. cts.keymap=us
+#   vconsole.keymap=<map> systemd's own option, already applied at boot
+
+DEFAULT="sv-latin1"   # also set in /etc/vconsole.conf
+TIMEOUT=10
+DONE=/run/cts-keymap.done
+
+LAYOUTS=(
+  "sv-latin1:Swedish"
+  "us:English (US)"
+  "uk:English (UK)"
+  "fi:Finnish"
+  "no-latin1:Norwegian"
+  "dk-latin1:Danish"
+  "de-latin1:German"
+  "fr-latin1:French"
+  "es:Spanish"
+  "it:Italian"
+  "nl:Dutch"
+)
+
+apply() {
+  if loadkeys "$1" >/dev/null 2>&1; then
+    echo "Keyboard layout: $1"
+    : > "$DONE"
+    return 0
+  fi
+  echo "Unknown keymap '$1' (list them with: localectl list-keymaps)"
+  return 1
+}
+
+cmdline_value() {
+  local p
+  for p in $(</proc/cmdline); do
+    [[ $p == "$1="* ]] && { echo "${p#*=}"; return 0; }
+  done
+  return 1
+}
+
+# Automatic mode (from .zlogin): only once per boot, honour kernel options.
+if [[ ${1:-} == --auto ]]; then
+  [[ -e $DONE ]] && exit 0
+  if km=$(cmdline_value cts.keymap); then apply "$km"; exit 0; fi
+  if cmdline_value vconsole.keymap >/dev/null; then : > "$DONE"; exit 0; fi
+fi
+
+echo
+echo "Select keyboard layout (Enter = ${DEFAULT}, automatic after ${TIMEOUT} s):"
+for i in "${!LAYOUTS[@]}"; do
+  printf "  %2d) %-11s %s\n" $((i + 1)) "${LAYOUTS[i]%%:*}" "${LAYOUTS[i]#*:}"
+done
+echo "  or type any keymap name (e.g. de-latin1-nodeadkeys)"
+
+for _ in 1 2 3; do
+  if ! read -r -t "$TIMEOUT" -p "Layout [1]: " choice; then
+    echo
+    apply "$DEFAULT"; exit 0
+  fi
+  choice="${choice// /}"
+  if [[ -z $choice ]]; then
+    apply "$DEFAULT" && exit 0
+  elif [[ $choice =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#LAYOUTS[@]} )); then
+    apply "${LAYOUTS[choice - 1]%%:*}" && exit 0
+  else
+    apply "$choice" && exit 0
+  fi
+done
+apply "$DEFAULT"
