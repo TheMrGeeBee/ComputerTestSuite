@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 TheMrGeeBee
 
-# ComputerTestSuite: pick the keyboard layout (once per boot), then
-# auto-start a profile when booted with cts.autorun=<profile>
+# ComputerTestSuite: pick the keyboard layout (once per boot), then open the
+# terminal interface. cts.autorun=<profile> on the kernel command line starts
+# that profile automatically. Quitting the interface leaves you in this shell.
 if [[ $(tty) == /dev/tty1 ]] && command -v cts >/dev/null; then
     cts-keymap --auto
-    cts autorun
+    if [[ ! -e /run/cts-ui.started ]]; then
+        : > /run/cts-ui.started
+        cts ui --boot
+    fi
 fi

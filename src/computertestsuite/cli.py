@@ -1,24 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 TheMrGeeBee
 
-"""Command-line interface: ``cts info | list | run | report``."""
+"""Command-line interface: ``cts [ui] | info | list | run | report``.
+
+Without a command, ``cts`` opens the full-screen terminal interface.
+"""
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
 
 from . import __version__
-from .core import report, storage_target, sysinfo
+from .core import report, session, storage_target, sysinfo
 from .core.context import RunContext
 from .core.disks import destructive_refusal, list_disks, test_targets
-from .core.model import Status, overall
+from .core.model import Status
 from .core.profiles import PROFILES, fmt_duration, parse_duration
 from .core.registry import discover, select
-from .core.runner import Runner
 
 
 def _csv(s: str) -> list[str]:
@@ -32,7 +33,14 @@ def build_parser() -> argparse.ArgumentParser:
                    version=f"cts {__version__}\nLicense GPL-3.0-or-later <https://www.gnu.org/licenses/gpl-3.0.html>\n"
                            "This is free software: you are free to change and redistribute it.\n"
                            "There is NO WARRANTY, to the extent permitted by law.")
-    sub = p.add_subparsers(dest="command", required=True)
+    sub = p.add_subparsers(dest="command")
+
+    up = sub.add_parser("ui", help="full-screen terminal interface (default when no command is given)")
+    up.add_argument("--profile", choices=PROFILES, default="quick", help="preselected profile")
+    up.add_argument("--only", type=_csv, help="preselect only these tests or subsystems")
+    up.add_argument("--start", action="store_true", help="start the run after a 10 s countdown")
+    up.add_argument("--boot", action="store_true",
+                    help="used at boot: honour cts.autorun=<profile> from the kernel command line")
 
     sub.add_parser("info", help="show a hardware inventory")
 
@@ -52,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--iperf-server", metavar="HOST", help="iperf3 server for the network throughput test")
     rp.add_argument("-v", "--verbose", action="store_true")
 
-    sub.add_parser("autorun", help=argparse.SUPPRESS)
+    sub.add_parser("autorun")  # hidden helper, kept for scripts
 
     rep = sub.add_parser("report", help="show a saved report")
     rep.add_argument("path", nargs="?", type=Path, help="report.json or run directory (default: latest)")
@@ -136,50 +144,46 @@ def cmd_run(args: argparse.Namespace, profile_override: str | None = None) -> in
         if not confirm_destructive(ctx.devices):
             return 2
 
-    run_dir, persistent = storage_target.new_run_dir()
-    ctx.log_dir = run_dir / "logs"
+    s = session.prepare(ctx, tests)
     if not ctx.is_root:
         print("note: not running as root; disk, GPU and kernel-log checks will be skipped or limited.")
     print(f"Profile {ctx.profile.name}: {ctx.profile.description}")
     print("Tests  : " + ", ".join(t.name for t in tests))
-    est = sum(t.estimate(ctx) for t in tests if t.available(ctx) is None)
-    print(f"Estimated time: {fmt_duration(est)}   Reports: {run_dir}"
-          + ("" if persistent else "  (in RAM: lost on reboot; see README for CTS_REPORTS)"))
-    if not persistent and storage_target.fallback_hint:
-        print("note: " + storage_target.fallback_hint)
+    print(f"Estimated time: {fmt_duration(s.total_estimate)}   Reports: {s.run_dir}"
+          + ("" if s.persistent else "  (in RAM: lost on reboot; see README for CTS_REPORTS)"))
+    if not s.persistent and s.fallback_hint:
+        print("note: " + s.fallback_hint)
 
-    info = sysinfo.collect()
-    started = time.time()
-    runner = Runner(ctx, tests)
-    results = runner.run()
-    meta = {
-        "version": __version__,
-        "profile": ctx.profile.name,
-        "test_seconds": ctx.seconds,
-        "started": started,
-        "finished": time.time(),
-        "aborted": runner.aborted,
-        "root": ctx.is_root,
-        "kmsg_available": runner.monitor.kmsg_available,
-        "args": sys.argv[1:],
-    }
-    rep = report.build(results, info, meta)
-    _, txt = report.write(run_dir, rep)
-    os.sync()  # reports may be on a USB stick that gets pulled right after
+    verdict = session.execute(s)
     print()
-    print(report.format_text(rep))
-    print(f"Report saved to {txt}")
-    verdict = overall([r for r in results if r.status != Status.SKIP])
+    print(report.format_text(s.report))
+    print(f"Report saved to {s.report_txt}")
     return 1 if verdict >= Status.FAIL else 0
 
 
-def cmd_autorun(parser: argparse.ArgumentParser) -> int:
-    """Run the profile named by ``cts.autorun=<profile>`` on the kernel command line."""
+def autorun_profile() -> str | None:
+    """The profile named by ``cts.autorun=<profile>`` on the kernel command line, if any."""
     try:
         cmdline = Path("/proc/cmdline").read_text().split()
     except OSError:
-        return 0
-    prof = next((a.split("=", 1)[1] for a in cmdline if a.startswith("cts.autorun=")), None)
+        return None
+    return next((a.split("=", 1)[1] for a in cmdline if a.startswith("cts.autorun=")), None)
+
+
+def cmd_ui(args: argparse.Namespace) -> int:
+    from .tui import run_ui  # curses is only needed here
+
+    profile, start = args.profile, args.start
+    if args.boot:
+        auto = autorun_profile()
+        if auto in PROFILES:
+            profile, start = auto, True
+    return run_ui(profile=profile, only=args.only, autostart=start)
+
+
+def cmd_autorun(parser: argparse.ArgumentParser) -> int:
+    """Plain-text version of the boot auto-run (kept for scripts; the live system uses ``cts ui --boot``)."""
+    prof = autorun_profile()
     if not prof:
         return 0
     if prof not in PROFILES:
@@ -206,7 +210,15 @@ def cmd_report(path: Path | None) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            args = parser.parse_args(["ui"])
+        else:
+            parser.print_help()
+            return 2
     match args.command:
+        case "ui":
+            return cmd_ui(args)
         case "info":
             return cmd_info()
         case "list":

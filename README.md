@@ -51,6 +51,39 @@ Each profile has its own "CTS auto-run" entry in the boot menu.
 
 ## Usage (on the live system)
 
+### Terminal interface
+After the keyboard-layout question, the live system opens a full-screen menu on tty1. Typing
+`cts` with no arguments opens it too.
+
+```
+ ComputerTestSuite 0.1.0  Intel(R) Core(TM) i7-8565U                CPU 81°C  2.4 GHz
+ ──────────────────────────────────────────────────────────────────────────────────────
+ (I)nfo       │ Profile: quick      Elapsed 6m12s     Left ~11m                Errors: 0
+ (T)ests      │ Overall [####################..........................................]  34%
+ (S)tatus     │ PASS  storage-smart   [####################################] 100% 12s
+ (R)eports    │ WARN  cpu             [####################################] 100% 2m31s
+ (K)eyboard   │ RUN   memory-pattern  [##############......................]  38% 57s/2m30s
+ (Q)uit       │       memory-stress   [....................................]   0%
+```
+
+| Key | Action |
+|-----|--------|
+| `I` | System information |
+| `T` | Choose the profile (Left/Right) and tick tests on or off (Space, `A` for all) |
+| `S` / Enter | Start the run, or show the running one |
+| `L` | Live log of the current test |
+| Esc | Stop the current test (asks first; the report is still written) |
+| `R` | Saved reports: Enter opens one |
+| `K` | Change the keyboard layout |
+| `Q` | Quit to the root shell (asks first if a test is running) |
+
+Progress bars are time-based: each test's elapsed time against its estimate. A bar stays at 99%
+if a test runs over, until the test finishes. Tests that can't run on the machine are shown as
+skipped, with the reason. The boot menu's **CTS auto-run** entries open the interface and start
+their profile after a 10-second countdown; any key cancels it. The destructive disk test is
+only available from the command line.
+
+### Command line
 ```
 cts info                                  # hardware inventory
 cts list                                  # tests, and why any would be skipped
