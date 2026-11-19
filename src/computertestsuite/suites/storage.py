@@ -52,6 +52,101 @@ def smart_counters(data: dict[str, Any]) -> dict[str, int]:
     return c
 
 
+# ---------------------------------------------------------------- age and wear
+
+WEAR_WARN_PCT = 90
+
+# SATA SSD vendor attributes whose *normalized* value counts down from 100 to 0 (% life left).
+# Matched by name too, since vendors reuse attribute numbers for other things.
+ATA_LIFE_LEFT_ATTRS = {
+    233: "Media_Wearout_Indicator",   # Intel
+    177: "Wear_Leveling_Count",       # Samsung
+    231: "SSD_Life_Left",             # SandForce-based (Kingston, OCZ, ...)
+    202: "Percent_Lifetime_Remain",   # Crucial / Micron
+    169: "Remaining_Lifetime_Perc",   # WD / SanDisk / Toshiba
+}
+
+# SATA attributes counting data written: name -> bytes per raw unit (None: the logical block size).
+ATA_WRITTEN_ATTRS = {
+    "Host_Writes_32MiB": 32 * 2**20,  # Intel
+    "Host_Writes_GiB": 2**30,
+    "Lifetime_Writes_GiB": 2**30,
+    "Total_Writes_GiB": 2**30,
+    "Total_LBAs_Written": None,
+}
+
+
+def _devstat(data: dict[str, Any], page: int, name: str) -> int | None:
+    """A value from the ATA Device Statistics log (standardized, smartctl -x)."""
+    for p in data.get("ata_device_statistics", {}).get("pages", []):
+        if p.get("number") == page:
+            for e in p.get("table", []):
+                if e.get("name") == name and isinstance(e.get("value"), int):
+                    return e["value"]
+    return None
+
+
+def drive_life(data: dict[str, Any]) -> dict[str, int]:
+    """Power-on hours, power cycles, % of rated write endurance used and bytes written, where reported."""
+    life: dict[str, int] = {}
+    nv = data.get("nvme_smart_health_information_log") or {}
+    attrs = {a.get("id"): a for a in data.get("ata_smart_attributes", {}).get("table", [])}
+
+    hours = data.get("power_on_time", {}).get("hours", nv.get("power_on_hours"))
+    if hours is None and 9 in attrs:
+        hours = attrs[9].get("raw", {}).get("value")
+    if hours is not None:
+        life["power_on_hours"] = int(hours)
+    cycles = data.get("power_cycle_count", nv.get("power_cycles"))
+    if cycles is not None:
+        life["power_cycles"] = int(cycles)
+
+    wear = data.get("endurance_used", {}).get("current_percent")
+    if wear is None:
+        wear = nv.get("percentage_used")
+    if wear is None:
+        wear = _devstat(data, 7, "Percentage Used Endurance Indicator")
+    if wear is None:
+        for num, name in ATA_LIFE_LEFT_ATTRS.items():
+            a = attrs.get(num)
+            if a and a.get("name") == name and isinstance(a.get("value"), int) and a["value"] <= 100:
+                wear = 100 - a["value"]
+                break
+    if wear is not None:
+        life["wear_used_pct"] = int(wear)
+
+    block = int(data.get("logical_block_size") or 512)
+    written = None
+    if "data_units_written" in nv:
+        written = int(nv["data_units_written"]) * 512_000  # NVMe units are 1000 x 512 bytes
+    elif (sectors := _devstat(data, 1, "Logical Sectors Written")) is not None:
+        written = sectors * block
+    else:
+        for a in attrs.values():
+            if a.get("name") in ATA_WRITTEN_ATTRS:
+                unit = ATA_WRITTEN_ATTRS[a["name"]] or block
+                written = int(a.get("raw", {}).get("value", 0)) * unit
+                break
+    if written:
+        life["written_bytes"] = written
+    return life
+
+
+def format_life(life: dict[str, int]) -> str:
+    parts = []
+    if "power_on_hours" in life:
+        h = life["power_on_hours"]
+        parts.append(f"{h} h powered on ({h / 8766:.1f} years)" if h >= 8766 else f"{h} h powered on")
+    if "power_cycles" in life:
+        parts.append(f"{life['power_cycles']} power cycles")
+    if "wear_used_pct" in life:
+        w = life["wear_used_pct"]
+        parts.append(f"wear {w}% used ({max(0, 100 - w)}% left)")
+    if "written_bytes" in life:
+        parts.append(f"{life['written_bytes'] / 1e12:.1f} TB written")
+    return ", ".join(parts)
+
+
 def evaluate_smart(data: dict[str, Any], dev: str) -> list[tuple[Status, str]]:
     out: list[tuple[Status, str]] = []
     if not data:
@@ -65,8 +160,10 @@ def evaluate_smart(data: dict[str, Any], dev: str) -> list[tuple[Status, str]]:
         elif val:
             out.append((Status.WARN, f"{dev}: {name} = {val}"))
     nv = data.get("nvme_smart_health_information_log") or {}
-    if nv.get("percentage_used", 0) >= 100:
-        out.append((Status.WARN, f"{dev}: NVMe endurance used {nv['percentage_used']}%"))
+    wear = drive_life(data).get("wear_used_pct")
+    if wear is not None and wear >= WEAR_WARN_PCT:
+        out.append((Status.WARN, f"{dev}: {wear}% of the rated write endurance used"
+                                 + (" (worn out: replace soon)" if wear >= 100 else " (near the end of its rated life)")))
     if nv.get("available_spare", 100) <= nv.get("available_spare_threshold", 0):
         out.append((Status.FAIL, f"{dev}: NVMe spare blocks below threshold"))
     errs = data.get("ata_smart_error_log", {}).get("summary", {}).get("count", 0)
@@ -186,6 +283,8 @@ class StorageSmart(StressTest):
             for status, msg in evaluate_smart(data, d.path):
                 result.add(status, msg)
             result.metrics[f"{d.path}.smart"] = smart_counters(data) or "n/a"
+            if life := format_life(drive_life(data)):
+                result.metrics[f"{d.path}.life"] = life
             temp = data.get("temperature", {}).get("current")
             if temp is not None:
                 result.metrics[f"{d.path}.temp_c"] = temp
