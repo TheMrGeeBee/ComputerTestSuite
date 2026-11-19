@@ -55,6 +55,7 @@ def smart_counters(data: dict[str, Any]) -> dict[str, int]:
 # ---------------------------------------------------------------- age and wear
 
 WEAR_WARN_PCT = 90
+PLACEHOLDER_PCT = 255  # the largest value the 8-bit standard indicator can hold
 
 # SATA SSD vendor attributes whose *normalized* value counts down from 100 to 0 (% life left).
 # Matched by name too, since vendors reuse attribute numbers for other things.
@@ -104,17 +105,23 @@ def drive_life(data: dict[str, Any]) -> dict[str, Any]:
     if cycles is not None:
         life["power_cycles"] = int(cycles)
 
+    vendor = None  # (wear, source) from the vendor's own life-left attribute
+    for num, name in ATA_LIFE_LEFT_ATTRS.items():
+        a = attrs.get(num)
+        if a and a.get("name") == name and isinstance(a.get("value"), int) and a["value"] <= 100:
+            vendor = 100 - a["value"], f"attribute {num} {name}"
+            break
     wear, source = data.get("endurance_used", {}).get("current_percent"), "smartctl endurance"
     if wear is None:
         wear, source = nv.get("percentage_used"), "NVMe percentage used"
     if wear is None:
         wear, source = _devstat(data, 7, "Percentage Used Endurance Indicator"), "device statistics"
-    if wear is None:
-        for num, name in ATA_LIFE_LEFT_ATTRS.items():
-            a = attrs.get(num)
-            if a and a.get("name") == name and isinstance(a.get("value"), int) and a["value"] <= 100:
-                wear, source = 100 - a["value"], f"attribute {num} {name}"
-                break
+    if wear is not None and int(wear) >= PLACEHOLDER_PCT and vendor:
+        # Some SATA SSDs (e.g. Intel's SandForce-based ones) put the field's maximum in the standard
+        # indicator instead of a measurement; the vendor's own attribute is the real one then.
+        wear, source = vendor[0], f"{vendor[1]}; the standard indicator shows {int(wear)}, a placeholder"
+    elif wear is None and vendor:
+        wear, source = vendor
     if wear is not None:
         life["wear_used_pct"] = int(wear)
         life["wear_source"] = source

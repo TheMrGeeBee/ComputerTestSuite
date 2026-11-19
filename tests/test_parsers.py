@@ -306,6 +306,31 @@ def test_drive_life_sources_in_order():
         {"power_on_hours": 40000}
 
 
+def test_wear_placeholder_255_uses_the_vendor_attribute():
+    """Values from an Intel SSDSC2BW180A3L (SandForce): the standard indicator says 255 while
+    Intel's own attribute says unused, with ~150 average erase cycles behind it."""
+    from computertestsuite.suites.storage import drive_life
+
+    data = {"power_on_time": {"hours": 50639, "minutes": 27}, "power_cycle_count": 3936,
+            "endurance_used": {"current_percent": 255},
+            "ata_device_statistics": {"pages": [
+                {"number": 1, "table": [{"name": "Logical Sectors Written", "value": 61824683025,
+                                         "flags": {"valid": True}}]},
+                {"number": 7, "table": [{"name": "Percentage Used Endurance Indicator", "value": 255,
+                                         "flags": {"valid": True}}]}]},
+            "ata_smart_attributes": {"table": [_attr(226, "Workld_Media_Wear_Indic", 100, 65535),
+                                               _attr(233, "Media_Wearout_Indicator", 100, 0),
+                                               _attr(241, "Host_Writes_32MiB", 100, 940252)]}}
+    life = drive_life(data)
+    assert life["wear_used_pct"] == 0
+    assert life["wear_source"].startswith("attribute 233 Media_Wearout_Indicator; the standard indicator shows 255")
+    assert life["written_bytes"] == 61824683025 * 512
+    assert not any("endurance" in m for _, m in evaluate_smart({**data, "smart_status": {"passed": True}}, "/dev/sda"))
+    # Without a vendor attribute, 255 stays (it may be real) and warns.
+    del data["ata_smart_attributes"]
+    assert drive_life(data)["wear_used_pct"] == 255
+
+
 def test_worn_ssd_is_a_warning():
     data = {"smart_status": {"passed": True},
             "ata_smart_attributes": {"table": [_attr(233, "Media_Wearout_Indicator", 8, 0)]}}
