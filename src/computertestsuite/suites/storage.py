@@ -81,14 +81,17 @@ def _devstat(data: dict[str, Any], page: int, name: str) -> int | None:
     for p in data.get("ata_device_statistics", {}).get("pages", []):
         if p.get("number") == page:
             for e in p.get("table", []):
-                if e.get("name") == name and isinstance(e.get("value"), int):
-                    return e["value"]
+                if e.get("name") != name or not isinstance(e.get("value"), int):
+                    continue
+                if e.get("flags", {}).get("valid") is False:
+                    return None  # the drive marks this value as not valid
+                return e["value"]
     return None
 
 
-def drive_life(data: dict[str, Any]) -> dict[str, int]:
+def drive_life(data: dict[str, Any]) -> dict[str, Any]:
     """Power-on hours, power cycles, % of rated write endurance used and bytes written, where reported."""
-    life: dict[str, int] = {}
+    life: dict[str, Any] = {}
     nv = data.get("nvme_smart_health_information_log") or {}
     attrs = {a.get("id"): a for a in data.get("ata_smart_attributes", {}).get("table", [])}
 
@@ -101,19 +104,20 @@ def drive_life(data: dict[str, Any]) -> dict[str, int]:
     if cycles is not None:
         life["power_cycles"] = int(cycles)
 
-    wear = data.get("endurance_used", {}).get("current_percent")
+    wear, source = data.get("endurance_used", {}).get("current_percent"), "smartctl endurance"
     if wear is None:
-        wear = nv.get("percentage_used")
+        wear, source = nv.get("percentage_used"), "NVMe percentage used"
     if wear is None:
-        wear = _devstat(data, 7, "Percentage Used Endurance Indicator")
+        wear, source = _devstat(data, 7, "Percentage Used Endurance Indicator"), "device statistics"
     if wear is None:
         for num, name in ATA_LIFE_LEFT_ATTRS.items():
             a = attrs.get(num)
             if a and a.get("name") == name and isinstance(a.get("value"), int) and a["value"] <= 100:
-                wear = 100 - a["value"]
+                wear, source = 100 - a["value"], f"attribute {num} {name}"
                 break
     if wear is not None:
         life["wear_used_pct"] = int(wear)
+        life["wear_source"] = source
 
     block = int(data.get("logical_block_size") or 512)
     written = None
@@ -132,7 +136,7 @@ def drive_life(data: dict[str, Any]) -> dict[str, int]:
     return life
 
 
-def format_life(life: dict[str, int]) -> str:
+def format_life(life: dict[str, Any]) -> str:
     parts = []
     if "power_on_hours" in life:
         h = life["power_on_hours"]
@@ -141,7 +145,7 @@ def format_life(life: dict[str, int]) -> str:
         parts.append(f"{life['power_cycles']} power cycles")
     if "wear_used_pct" in life:
         w = life["wear_used_pct"]
-        parts.append(f"wear {w}% used ({max(0, 100 - w)}% left)")
+        parts.append(f"wear {w}% used ({max(0, 100 - w)}% left, from {life['wear_source']})")
     if "written_bytes" in life:
         parts.append(f"{life['written_bytes'] / 1e12:.1f} TB written")
     return ", ".join(parts)
@@ -280,6 +284,11 @@ class StorageSmart(StressTest):
         before: dict[str, tuple[int, str] | None] = {}
         for d in disks:
             data = smartctl_json(["-x", d.path])
+            # Keep the drive's full SMART data with the report: readable text in the log, and the
+            # JSON next to it, so any value in the verdict can be checked afterwards.
+            proc.run(["smartctl", "-x", d.path], timeout=60, log=log)
+            if data:
+                log.with_name(f"{self.name}.{d.name}.json").write_text(json.dumps(data, indent=1))
             for status, msg in evaluate_smart(data, d.path):
                 result.add(status, msg)
             result.metrics[f"{d.path}.smart"] = smart_counters(data) or "n/a"

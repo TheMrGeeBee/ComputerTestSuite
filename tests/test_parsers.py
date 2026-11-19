@@ -274,9 +274,9 @@ def test_drive_life_intel_sata_ssd():
                                                _attr(241, "Host_Writes_32MiB", 100, 300_000)]}}
     life = drive_life(data)
     assert life == {"power_on_hours": 21000, "power_cycles": 3100, "wear_used_pct": 6,
-                    "written_bytes": 300_000 * 32 * 2**20}
+                    "wear_source": "attribute 233 Media_Wearout_Indicator", "written_bytes": 300_000 * 32 * 2**20}
     assert format_life(life) == ("21000 h powered on (2.4 years), 3100 power cycles, "
-                                 "wear 6% used (94% left), 10.1 TB written")
+                                 "wear 6% used (94% left, from attribute 233 Media_Wearout_Indicator), 10.1 TB written")
 
 
 def test_drive_life_sources_in_order():
@@ -288,7 +288,11 @@ def test_drive_life_sources_in_order():
                 {"number": 7, "table": [{"name": "Percentage Used Endurance Indicator", "value": 12}]}]},
             "ata_smart_attributes": {"table": [_attr(177, "Wear_Leveling_Count", 50, 900),
                                                _attr(241, "Total_LBAs_Written", 100, 5)]}}
-    assert drive_life(data) == {"wear_used_pct": 12, "written_bytes": 2_000_000 * 512}
+    assert drive_life(data) == {"wear_used_pct": 12, "wear_source": "device statistics",
+                                "written_bytes": 2_000_000 * 512}
+    # A device statistic the drive marks as not valid is ignored: the vendor attribute is used.
+    data["ata_device_statistics"]["pages"][1]["table"][0].update(value=255, flags={"valid": False})
+    assert drive_life(data)["wear_used_pct"] == 50
     # A reused attribute number with another name is not taken as wear.
     other = {"ata_smart_attributes": {"table": [_attr(177, "Some_Other_Counter", 60, 1)]}}
     assert "wear_used_pct" not in drive_life(other)
@@ -296,7 +300,7 @@ def test_drive_life_sources_in_order():
     nv = {"nvme_smart_health_information_log": {"percentage_used": 3, "power_on_hours": 500,
                                                   "power_cycles": 40, "data_units_written": 1_000_000}}
     assert drive_life(nv) == {"power_on_hours": 500, "power_cycles": 40, "wear_used_pct": 3,
-                              "written_bytes": 512_000_000_000}
+                              "wear_source": "NVMe percentage used", "written_bytes": 512_000_000_000}
     # A hard disk: only age.
     assert drive_life({"ata_smart_attributes": {"table": [_attr(9, "Power_On_Hours", 60, 40000)]}}) == \
         {"power_on_hours": 40000}
