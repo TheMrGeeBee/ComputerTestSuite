@@ -334,6 +334,8 @@ def test_wifi_missing_driver_verdict():
     broadcom = {"slot": "0000:02:00.0", "id": "14e4:4365", "modalias": "pci:x", "driver": ""}
     status, msg = missing_driver_verdict(broadcom, [])
     assert status == Status.SKIP and "'wl' driver" in msg
+    status, msg = missing_driver_verdict(broadcom, [], wl_available=True)  # wl exists but doesn't know the chip
+    assert status == Status.SKIP and "'wl'" not in msg
     intel = {"slot": "0000:00:14.3", "id": "8086:a370", "modalias": "pci:y", "driver": ""}
     status, msg = missing_driver_verdict(intel, [])
     assert status == Status.SKIP and "'wl'" not in msg

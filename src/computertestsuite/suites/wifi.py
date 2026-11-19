@@ -72,12 +72,18 @@ def driver_modules(modalias: str) -> list[str]:
     return proc.capture(["modprobe", "--resolve-alias", modalias], timeout=10).split()
 
 
-# Chips that only Broadcom's proprietary "wl" driver supports; the open drivers (brcmfmac, b43) do not.
-WL_ONLY_HINT = ("Broadcom chips like this one need Broadcom's proprietary 'wl' driver (broadcom-wl), "
-                "which is not on the stick")
+def have_wl() -> bool:
+    """Broadcom's proprietary wl driver is installed (the ISO build compiles it in)."""
+    return bool(proc.capture(["modinfo", "-F", "filename", "wl"], timeout=10).strip())
 
 
-def missing_driver_verdict(dev: dict[str, str], modules: list[str]) -> tuple[Status, str]:
+# Many Broadcom chips (e.g. BCM43142, BCM4352) are only supported by Broadcom's proprietary wl driver.
+WL_ONLY_HINT = ("Broadcom chips like this one need Broadcom's proprietary 'wl' driver, "
+                "which this stick does not have")
+
+
+def missing_driver_verdict(dev: dict[str, str], modules: list[str],
+                           wl_available: bool = False) -> tuple[Status, str]:
     """Verdict for a Wi-Fi PCI device that has no network interface."""
     where = f"Wi-Fi chip {dev['id']} at {dev['slot']}"
     if dev["driver"]:
@@ -86,7 +92,7 @@ def missing_driver_verdict(dev: dict[str, str], modules: list[str]) -> tuple[Sta
     if modules:
         return Status.FAIL, (f"{where}: driver {', '.join(modules)} exists but did not take the device "
                              "(load or probe failed; see kernel log)")
-    hint = f"; {WL_ONLY_HINT}" if dev["id"].startswith("14e4:") else ""
+    hint = f"; {WL_ONLY_HINT}" if dev["id"].startswith("14e4:") and not wl_available else ""
     return Status.SKIP, f"{where}: no Linux driver for this chip on the stick, Wi-Fi not tested{hint}"
 
 
@@ -287,7 +293,7 @@ class Wifi(StressTest):
                     modules = driver_modules(dev["modalias"])
                     f.write(f"{dev['slot']} {dev['id']} modalias={dev['modalias']} bound driver="
                             f"{dev['driver'] or '-'} matching modules={', '.join(modules) or '-'}\n")
-                    result.add(*missing_driver_verdict(dev, modules))
+                    result.add(*missing_driver_verdict(dev, modules, have_wl()))
             return
         for rf in rfkill_wlan():
             if rf["hard"]:

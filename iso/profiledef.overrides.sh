@@ -10,4 +10,6 @@ iso_application="ComputerTestSuite live stress-test system"
 file_permissions+=(
   ["/usr/local/bin/cts"]="0:0:755"
   ["/usr/local/bin/cts-keymap"]="0:0:755"
+  ["/usr/local/bin/cts-broadcom-wl"]="0:0:755"
+  ["/root/customize_airootfs.sh"]="0:0:755"
 )

@@ -1,0 +1,12 @@
+[Unit]
+Description=Load the Broadcom wl Wi-Fi driver for chips without an open driver
+After=systemd-udev-trigger.service systemd-modules-load.service
+Before=iwd.service network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cts-broadcom-wl
+
+[Install]
+WantedBy=multi-user.target

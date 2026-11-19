@@ -27,3 +27,7 @@ vkmark
 # Network
 ethtool
 iperf3
+# Build-time only: dkms compiles Broadcom's wl Wi-Fi driver, then
+# airootfs/root/customize_airootfs.sh keeps the module and removes these again.
+linux-headers
+broadcom-wl-dkms

@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 TheMrGeeBee
+#
+# Load Broadcom's proprietary wl Wi-Fi driver, but only for Broadcom Wi-Fi chips that no open
+# driver took (e.g. BCM43142, BCM4352). wl is blacklisted for automatic loading because it
+# claims many chips the open drivers (brcmfmac, b43) handle, and the two must not fight.
+
+modinfo wl >/dev/null 2>&1 || exit 0
+udevadm settle --timeout=15 2>/dev/null
+
+for dev in /sys/bus/pci/devices/*; do
+    [ "$(cat "$dev/vendor" 2>/dev/null)" = "0x14e4" ] || continue
+    case "$(cat "$dev/class" 2>/dev/null)" in 0x0280*) ;; *) continue ;; esac
+    [ -e "$dev/driver" ] && continue
+    echo "Broadcom Wi-Fi ${dev##*/} has no open driver: loading wl"
+    exec modprobe wl
+done
+exit 0

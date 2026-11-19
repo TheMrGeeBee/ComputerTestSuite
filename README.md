@@ -96,6 +96,13 @@ type the password, then run the `wifi` test. With an iperf3 server set (`N` on t
 it measures throughput over Wi-Fi in both directions. Driver or firmware crashes in the kernel log
 fail the test.
 
+A chip that Linux on the stick has no driver for is a SKIP, not a FAIL: the hardware may be fine.
+Many older Broadcom chips (e.g. BCM43142, BCM4352) only work with Broadcom's proprietary `wl`
+driver, the same one Ubuntu installs as "Additional Drivers". The ISO build compiles it for the
+ISO kernel and keeps only the module (no compiler on the stick). It is never loaded automatically,
+since it claims chips the open drivers handle better; at boot `cts-broadcom-wl` loads it only for
+a Broadcom Wi-Fi chip that no open driver took.
+
 ### Display (LCD) test
 Press `D`, or run `cts lcd` on the text console. It shows full-screen patterns one after another:
 black, white, red, green, blue, 50% gray, gray and colour gradients, a 1-pixel checkerboard, and a
