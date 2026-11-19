@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="used at boot: honour cts.autorun=<profile> from the kernel command line")
 
     sub.add_parser("info", help="show a hardware inventory")
+    sub.add_parser("lcd", help="interactive display test: full-screen colour patterns (text console only)")
 
     lp = sub.add_parser("list", help="list tests and whether they can run here")
     lp.add_argument("--destructive", action="store_true", help=argparse.SUPPRESS)
@@ -219,6 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     match args.command:
         case "ui":
             return cmd_ui(args)
+        case "lcd":
+            from .lcd import run_display_test
+
+            msg = run_display_test()
+            print(msg)
+            return 0 if msg.startswith("Display test:") else 1
         case "info":
             return cmd_info()
         case "list":

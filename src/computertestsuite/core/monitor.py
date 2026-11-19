@@ -54,6 +54,9 @@ KMSG_RULES: list[KmsgRule] = [
     KmsgRule(_r(r"\bnvme\w*: .*(I/O \d+ (QID \d+ )?timeout|controller is down|Device not ready|resetting controller|Abort status)"), Status.FAIL, "storage"),
     KmsgRule(_r(r"amdgpu.*(GPU reset|ring \S+ timeout|page fault|GPU fault)|i915.*(GPU HANG|Resetting)|\bxe .*(GT reset|timed out)|nouveau.*(fault|timeout)|NVRM: Xid"), Status.FAIL, "gpu"),
     KmsgRule(_r(r"NETDEV WATCHDOG|transmit queue \d+ timed out|Tx Unit Hang"), Status.FAIL, "network"),
+    KmsgRule(_r(r"(iwlwifi|ath\d+k|mt7\w*|mt76\w*|rtw\d+\w*|rtl8\w*|brcmfmac).*"
+                r"(Microcode SW error|firmware (crashed|has halted)|FW (error|crash)|Firmware trap|NMI_INTERRUPT"
+                r"|fw crash|failed to (start|run) .*ucode|Hardware error detected)"), Status.FAIL, "wifi"),
     KmsgRule(_r(r"usb \S+: (device descriptor read.*error|device not accepting address|unable to enumerate)|over-current"), Status.WARN, "usb"),
     KmsgRule(_r(r"temperature above threshold|cpu clock throttled|thermal.*critical"), Status.WARN, "thermal"),
     KmsgRule(_r(r"\bOut of memory: Killed process|oom-kill:"), Status.WARN, "memory"),

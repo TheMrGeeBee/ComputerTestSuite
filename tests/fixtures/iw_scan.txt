@@ -1,0 +1,28 @@
+BSS 02:11:22:33:44:55(on wlan0) -- associated
+	last seen: 1203.512s [boottime]
+	TSF: 81234567 usec (0d, 00:01:21)
+	freq: 5180.0
+	beacon interval: 100 TUs
+	capability: ESS Privacy SpectrumMgmt (0x0111)
+	signal: -48.00 dBm
+	last seen: 120 ms ago
+	SSID: HomeNet
+	RSN:	 * Version: 1
+		 * Group cipher: CCMP
+BSS 02:11:22:33:44:56(on wlan0)
+	freq: 2437.0
+	capability: ESS Privacy (0x0411)
+	signal: -61.00 dBm
+	SSID: HomeNet
+	RSN:	 * Version: 1
+BSS 0a:aa:bb:cc:dd:ee(on wlan0)
+	freq: 2412
+	capability: ESS (0x0401)
+	signal: -82.00 dBm
+	SSID: Caf\xc3\xa9 Guest
+BSS 0e:00:00:00:00:01(on wlan0)
+	freq: 5955.0
+	capability: ESS Privacy (0x0011)
+	signal: -70.00 dBm
+	SSID: 
+	RSN:	 * Version: 1

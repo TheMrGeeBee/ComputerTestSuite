@@ -2,6 +2,7 @@
   ComputerTestSuite: live hardware stress-test system
 
     cts                            test menu with progress bars (opens at boot)
+    cts lcd                        display test: dead pixels, backlight bleed
     cts info                       hardware inventory
     cts list                       which tests can run on this machine
     cts run                        quick check, about 15-20 minutes

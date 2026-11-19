@@ -253,3 +253,71 @@ def test_selftest_verdict_ata():
     assert selftest_verdict(ata(False, "Completed: read failure"))[0] == Status.FAIL
     assert selftest_verdict(ata(None, "Aborted by host"))[0] == Status.WARN
     assert selftest_verdict(ata(False, "Interrupted (host reset)"))[0] == Status.WARN
+
+
+@pytest.mark.parametrize("line", [
+    "iwlwifi 0000:00:14.3: Microcode SW error detected. Restarting 0x0.",
+    "ath11k_pci 0000:02:00.0: firmware crashed: MHI_CB_EE_RDDM",
+    "brcmfmac: brcmf_fw_crashed: Firmware has halted or crashed",
+    "rtw89_8852be 0000:03:00.0: FW error, dumping",
+])
+def test_kmsg_wifi_firmware_crash(line):
+    rule = classify_kmsg(line)
+    assert rule is not None and (rule.status, rule.category) == (Status.FAIL, "wifi"), line
+
+
+@pytest.mark.parametrize("line", [
+    "iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-92.ucode failed with error -2",
+    "iwlwifi 0000:00:14.3: loaded firmware version 89.202a2f7b.0 QuZ-a0-hr-b0-89.ucode op_mode iwlmvm",
+    "wlan0: associated",
+])
+def test_kmsg_wifi_benign(line):
+    assert classify_kmsg(line) is None, line
+
+
+def test_iw_scan_parsing():
+    from computertestsuite.suites.wifi import best_per_ssid, parse_iw_scan
+
+    nets = parse_iw_scan((FIX / "iw_scan.txt").read_text())
+    assert len(nets) == 4
+    home5 = nets[0]
+    assert (home5.bssid, home5.ssid, home5.signal_dbm, home5.band, home5.secure) == \
+        ("02:11:22:33:44:55", "HomeNet", -48.0, "5 GHz", True)
+    assert nets[2].ssid == "Café Guest" and not nets[2].secure and nets[2].band == "2.4 GHz"
+    assert nets[3].ssid == "" and nets[3].band == "6 GHz"
+    visible = best_per_ssid(nets)
+    assert [n.ssid for n in visible] == ["HomeNet", "Café Guest"]  # hidden dropped, strongest AP kept
+    assert visible[0].signal_dbm == -48.0
+
+
+def test_iw_link_parsing():
+    from computertestsuite.suites.wifi import parse_iw_link
+
+    assert parse_iw_link("Not connected.\n")["connected"] is False
+    info = parse_iw_link(
+        "Connected to 02:11:22:33:44:55 (on wlan0)\n\tSSID: HomeNet\n\tfreq: 5180.0\n"
+        "\tRX: 1234 bytes (10 packets)\n\tsignal: -52 dBm\n"
+        "\trx bitrate: 866.7 MBit/s VHT-MCS 9 80MHz short GI VHT-NSS 2\n"
+        "\ttx bitrate: 780.0 MBit/s VHT-MCS 8 80MHz short GI VHT-NSS 2\n")
+    assert (info["connected"], info["ssid"], info["signal_dbm"], info["tx_mbps"], info["rx_mbps"]) == \
+        (True, "HomeNet", -52.0, 780.0, 866.7)
+
+
+def test_wifi_hardware_discovery(tmp_path):
+    from computertestsuite.suites.wifi import rfkill_wlan, wifi_interfaces, wifi_pci_devices
+
+    net = tmp_path / "net"
+    (net / "wlan0" / "phy80211").mkdir(parents=True)
+    (net / "enp0s31f6").mkdir()
+    assert wifi_interfaces(net) == ["wlan0"]
+    pci = tmp_path / "pci"
+    (pci / "0000:00:14.3").mkdir(parents=True)
+    (pci / "0000:00:14.3" / "class").write_text("0x028000\n")
+    (pci / "0000:00:1f.6").mkdir()
+    (pci / "0000:00:1f.6" / "class").write_text("0x020000\n")
+    assert wifi_pci_devices(pci) == [{"slot": "0000:00:14.3", "driver": ""}]
+    rf = tmp_path / "rfkill" / "rfkill0"
+    rf.mkdir(parents=True)
+    for k, v in {"type": "wlan", "name": "phy0", "soft": "0", "hard": "1"}.items():
+        (rf / k).write_text(v + "\n")
+    assert rfkill_wlan(tmp_path / "rfkill") == [{"name": "phy0", "soft": False, "hard": True}]

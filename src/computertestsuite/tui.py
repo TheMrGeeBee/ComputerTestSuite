@@ -34,12 +34,13 @@ from .core.monitor import Monitor
 from .core.profiles import PROFILES, fmt_duration
 from .core.registry import discover
 from .core.runner import RunListener
+from .suites import wifi
 
 # (screen, label). The letter in parentheses is the hotkey.
 MENU = [("info", "(I)nfo"), ("tests", "(T)ests"), ("run", "(S)tart"), ("reports", "(R)eports"),
-        ("keyboard", "(K)eyboard"), ("quit", "(Q)uit")]
+        ("wifi", "(W)i-Fi"), ("display", "(D)isplay test"), ("keyboard", "(K)eyboard"), ("quit", "(Q)uit")]
 PROFILE_ORDER = ["quick", "standard", "burnin"]
-MENU_W = 15
+MENU_W = 16
 MIN_W, MIN_H = 72, 20
 COUNTDOWN = 10
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -195,6 +196,19 @@ class App:
         self.avail_cache: dict[tuple[str, str], tuple[str | None, int]] = {}
         self.countdown_until = time.time() + COUNTDOWN if autostart else 0.0
         self.quit = False
+        self.iperf_server: str | None = None
+        # text input box: {"title", "masked", "buf": bytearray, "show": bool, "done": callable(str)}
+        self.input: dict | None = None
+        # Wi-Fi screen
+        self.wifi_ifaces = wifi.wifi_interfaces()
+        self.wifi_nets: list[wifi.WifiNetwork] = []
+        self.wifi_cursor = 0
+        self.wifi_busy = ""  # "Scanning..." / "Connecting..." while a worker runs
+        self.wifi_msg = ""
+        self.wifi_link: dict = {}
+        self.wifi_ip = ""
+        self.wifi_link_t = 0.0
+        self.wifi_scanned = False
         self.last_redraw = 0.0
         self._idle_sample = None
         self._idle_t = 0.0
@@ -257,7 +271,7 @@ class App:
     def availability(self, t: StressTest) -> tuple[str | None, int]:
         key = (self.profile, t.name)
         if key not in self.avail_cache:
-            ctx = RunContext(profile=PROFILES[self.profile])
+            ctx = RunContext(profile=PROFILES[self.profile], iperf_server=self.iperf_server)
             try:
                 reason = t.available(ctx)
                 est = t.estimate(ctx) if reason is None else 0
@@ -278,7 +292,7 @@ class App:
             return
         self.status_msg = "Preparing run..."
         self.draw()
-        ctx = RunContext(profile=PROFILES[self.profile])
+        ctx = RunContext(profile=PROFILES[self.profile], iperf_server=self.iperf_server)
         try:
             s = session.prepare(ctx, tests)
         except Exception as e:  # noqa: BLE001
@@ -315,6 +329,9 @@ class App:
         if self.countdown_until:
             self.countdown_until = 0.0
             self.status_msg = "Automatic start cancelled"
+            return
+        if self.input is not None:
+            self.input_key(k)
             return
         ch = chr(k).lower() if 0 <= k < 256 else ""
 
@@ -364,8 +381,16 @@ class App:
             self.screen, self.cursor = "reports", 0
             self.report_dirs = self.find_reports()
             return
+        if ch == "w":
+            self.screen = "wifi"
+            if not self.wifi_scanned:
+                self.wifi_scan()
+            return
         if ch == "k":
             self.keyboard()
+            return
+        if ch == "d":
+            self.display_test()
             return
         if ch == "l" and self.run:
             self.overlay = "log"
@@ -396,8 +421,156 @@ class App:
             i = PROFILE_ORDER.index(self.profile)
             i = i - 1 if k == curses.KEY_LEFT else i + 1
             self.profile = PROFILE_ORDER[i % len(PROFILE_ORDER)]
+        elif k in (ord("n"), ord("N")):
+            def done(text: str) -> None:
+                self.iperf_server = text.strip() or None
+                self.avail_cache.clear()  # estimates depend on it
+            self.ask("iperf3 server for network/Wi-Fi throughput (empty = none)", done,
+                     initial=self.iperf_server or "")
         elif k in (10, 13, curses.KEY_ENTER):
             self.start_run()
+
+    # -- text input box
+    def ask(self, title: str, done, masked: bool = False, initial: str = "") -> None:
+        self.input = {"title": title, "masked": masked, "buf": bytearray(initial.encode()), "show": False,
+                      "done": done}
+
+    def input_key(self, k: int) -> None:
+        box = self.input
+        assert box is not None
+        if k == 27:  # Esc: cancel
+            self.input = None
+        elif k in (10, 13, curses.KEY_ENTER):
+            self.input = None
+            box["done"](box["buf"].decode("utf-8", "replace"))
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            text = box["buf"].decode("utf-8", "replace")[:-1]  # remove one character, not one byte
+            box["buf"] = bytearray(text.encode())
+        elif k == 9 and box["masked"]:  # Tab: show/hide the password
+            box["show"] = not box["show"]
+        elif 32 <= k <= 126 or 128 <= k <= 255:  # printable ASCII and UTF-8 bytes (å, ä, ö ...)
+            box["buf"].append(k)
+
+    def draw_input(self, h: int, w: int) -> None:
+        box = self.input
+        assert box is not None
+        text = box["buf"].decode("utf-8", "replace")
+        shown = text if (not box["masked"] or box["show"]) else "*" * len(text)
+        bw = min(w - 4, max(50, len(box["title"]) + 4))
+        y = h // 2 - 2
+        x = (w - bw) // 2
+        for i in range(5):
+            self.put(y + i, x, " " * bw, curses.A_REVERSE)
+        self.put(y, x + 2, box["title"][: bw - 4], curses.A_REVERSE | curses.A_BOLD)
+        self.put(y + 2, x + 2, (shown[-(bw - 6):] + "_").ljust(bw - 4), 0)
+        tip = "Enter OK   Esc cancel" + ("   Tab show/hide" if box["masked"] else "")
+        self.put(y + 4, x + 2, tip[: bw - 4], curses.A_REVERSE)
+
+    # -- Wi-Fi screen
+    def wifi_iface(self) -> str | None:
+        return self.wifi_ifaces[0] if self.wifi_ifaces else None
+
+    def _wifi_worker(self, busy: str, job) -> None:
+        if self.wifi_busy:
+            return
+        self.wifi_busy = busy
+
+        def run() -> None:
+            try:
+                job()
+            except Exception as e:  # noqa: BLE001 - shown in the UI
+                self.wifi_msg = f"error: {e}"
+            finally:
+                self.wifi_busy = ""
+                self.wifi_link_t = 0.0  # refresh link status now
+        threading.Thread(target=run, daemon=True, name="cts-wifi").start()
+
+    def wifi_scan(self) -> None:
+        iface = self.wifi_iface()
+        self.wifi_scanned = True
+        if not iface:
+            return
+
+        def job() -> None:
+            nets, problem = wifi.scan(iface)
+            self.wifi_nets = wifi.best_per_ssid(nets)
+            self.wifi_cursor = 0
+            self.wifi_msg = problem or f"{len(self.wifi_nets)} networks found"
+        self._wifi_worker("Scanning...", job)
+
+    def wifi_connect(self, net: wifi.WifiNetwork, passphrase: str | None) -> None:
+        iface = self.wifi_iface()
+        if not iface:
+            return
+
+        def job() -> None:
+            _ok, self.wifi_msg = wifi.connect(iface, net.ssid, passphrase)
+        self._wifi_worker(f"Connecting to {net.ssid}...", job)
+
+    def keys_wifi(self, k: int) -> None:
+        n = len(self.wifi_nets)
+        if k == curses.KEY_UP and n:
+            self.wifi_cursor = (self.wifi_cursor - 1) % n
+        elif k == curses.KEY_DOWN and n:
+            self.wifi_cursor = (self.wifi_cursor + 1) % n
+        elif k in (ord("u"), ord("U")):
+            self.wifi_scan()
+        elif k in (ord("x"), ord("X")) and self.wifi_iface():
+            iface = self.wifi_iface()
+
+            def job() -> None:
+                _ok, self.wifi_msg = wifi.disconnect(iface)
+            self._wifi_worker("Disconnecting...", job)
+        elif k in (10, 13, curses.KEY_ENTER) and n and not self.wifi_busy:
+            net = self.wifi_nets[self.wifi_cursor]
+            if net.secure:
+                self.ask(f"Password for {net.ssid}", lambda pw: self.wifi_connect(net, pw), masked=True)
+            else:
+                self.wifi_connect(net, None)
+
+    def draw_wifi(self, x: int, y0: int, cw: int, ch: int) -> None:
+        iface = self.wifi_iface()
+        self.put(y0, x, "Wi-Fi", curses.A_BOLD)
+        if not iface:
+            pci = wifi.wifi_pci_devices()
+            self.put(y0 + 2, x, "No Wi-Fi interface." if not pci else
+                     "Wi-Fi hardware found, but no interface: the driver or firmware did not load.",
+                     self.attr("WARN" if pci else "dim"), cw)
+            return
+        if time.time() - self.wifi_link_t > 3 and not self.wifi_busy:
+            self.wifi_link = wifi.link_info(iface)
+            self.wifi_ip = wifi.ipv4_address(iface)
+            self.wifi_link_t = time.time()
+        link = self.wifi_link
+        drv = wifi.interface_driver(iface)
+        self.put(y0, x + 7, f"{iface}" + (f" ({drv})" if drv else ""))
+        if link.get("connected"):
+            parts = [f"Connected to {link.get('ssid')}"]
+            if link.get("signal_dbm") is not None:
+                parts.append(f"{link['signal_dbm']:.0f} dBm")
+            if link.get("tx_mbps") is not None:
+                parts.append(f"{link['tx_mbps']:.0f} Mbit/s")
+            parts.append(f"IP {self.wifi_ip}" if self.wifi_ip else "no IP address yet")
+            self.put(y0 + 1, x, "   ".join(parts), self.attr("PASS"), cw)
+        else:
+            self.put(y0 + 1, x, "Not connected", self.attr("dim"))
+        status = self.wifi_busy or self.wifi_msg
+        if status:
+            self.put(y0 + 2, x, status, self.attr("RUN" if self.wifi_busy else "WARN"), cw)
+
+        self.put(y0 + 4, x, f"{'Signal':>8}  {'Band':7}  {'Security':8}  Network", curses.A_BOLD)
+        if not self.wifi_nets:
+            self.put(y0 + 5, x, "No networks listed yet - press U to scan." if not self.wifi_busy else "", 0, cw)
+        rows = ch - 8
+        start = max(0, self.wifi_cursor - rows + 1)
+        for i, net in enumerate(self.wifi_nets[start:start + rows], start=start):
+            sig = f"{net.signal_dbm:.0f} dBm" if net.signal_dbm is not None else "?"
+            mark = "  (connected)" if link.get("connected") and link.get("ssid") == net.ssid else ""
+            line = f"{sig:>8}  {net.band:7}  {'secured' if net.secure else 'open':8}  {net.ssid}{mark}"
+            self.put(y0 + 5 + i - start, x, line.ljust(cw), curses.A_REVERSE if i == self.wifi_cursor else 0, cw)
+        server = self.iperf_server or "not set (Tests screen: N)"
+        self.put(y0 + ch - 1, x, f"Throughput test: connect here, then run the 'wifi' test. iperf3 server: {server}",
+                 self.attr("dim"), cw)
 
     def keys_info(self, k: int) -> None:
         self.scroll_by(k, len(self.info_lines or []))
@@ -446,6 +619,27 @@ class App:
             self.scr.clear()
             self.scr.refresh()
 
+    def display_test(self) -> None:
+        from .lcd import console_problem, run_display_test
+
+        problem = console_problem()
+        if problem:
+            self.status_msg = problem
+            return
+        if self.run and self.run.active:
+            self.status_msg = "Finish or stop the running test first"
+            return
+        curses.def_prog_mode()
+        curses.endwin()
+        try:
+            self.status_msg = run_display_test()
+        except OSError as e:
+            self.status_msg = f"Display test failed: {e}"
+        finally:
+            curses.reset_prog_mode()
+            self.scr.clear()
+            self.scr.refresh()
+
     # -- drawing
     def draw(self) -> None:
         self.scr.erase()
@@ -470,6 +664,8 @@ class App:
         else:
             getattr(self, f"draw_{self.screen}")(x, y0, cw, ch)
         self.draw_footer(h, w)
+        if self.input is not None:
+            self.draw_input(h, w)
         self.scr.refresh()
 
     def draw_header(self, w: int) -> None:
@@ -507,13 +703,14 @@ class App:
                 label = "(S)tatus"
             active = self.screen == key and self.overlay is None
             self.put(y, 0, f" {label}".ljust(MENU_W), curses.A_REVERSE if active else 0)
-            y += 2
+            y += 2 if h >= 2 * len(MENU) + 9 else 1  # compact menu on short screens
         if self.run and self.run.active:
             self.put(h - 4, 1, "TEST RUNNING", self.attr("RUN"))
 
     def draw_footer(self, h: int, w: int) -> None:
         hints = {
-            "tests": "Up/Down move  Space tick  A all  Left/Right profile  Enter/S start",
+            "tests": "Up/Down move  Space tick  A all  Left/Right profile  N iperf3 server  Enter/S start",
+            "wifi": "Up/Down select  Enter connect  U scan again  X disconnect",
             "run": "Esc stop test  L live log",
             "info": "Up/Down/PgUp/PgDn scroll",
             "reports": "Up/Down select  Enter open",
@@ -530,8 +727,10 @@ class App:
             self.put(h - 1, 1, f"Starting the {self.profile} profile in {left} s - press any key to cancel",
                      self.attr("WARN"))
             return
-        msg = self.status_msg
-        self.put(h - 1, 1, hints, self.attr("dim"))
+        msg = self.status_msg[: w - 4]
+        room = w - len(msg) - 5 if msg else w - 2
+        if room > 10:
+            self.put(h - 1, 1, hints[:room], self.attr("dim"))
         if msg:
             self.put(h - 1, max(1, w - len(msg) - 2), msg, self.attr("WARN"))
 
@@ -582,6 +781,8 @@ class App:
         y += 1
         sel = [t for t in self.all_tests if t.name in self.selected and self.availability(t)[0] is None]
         self.put(y, x, f"{len(sel)} tests selected, estimated {fmt_duration(total)}", curses.A_BOLD)
+        self.put(y + 2, x, f"iperf3 server: {self.iperf_server or 'not set'} (N to change; used by network and wifi)",
+                 self.attr("dim"), cw)
         if self.status_msg.startswith("No tests"):
             self.put(y + 1, x, self.status_msg, self.attr("WARN"))
 

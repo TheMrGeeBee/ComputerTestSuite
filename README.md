@@ -26,6 +26,7 @@ while the test runs.
 | `storage-write`  | storage   | **DESTRUCTIVE** full-device write and verify. Opt-in only, see below              |
 | `gpu`            | gpu       | Continuous OpenGL ES (glmark2, KMS) and Vulkan (vkmark) rendering                 |
 | `network`        | network   | Link and NIC error counters; iperf3 throughput both ways with `--iperf-server`    |
+| `wifi`           | network   | Adapter/driver/firmware and radio check, scan for access points; signal, bitrate and iperf3 throughput when connected |
 | `usb`            | usb       | USB inventory and link speeds; watches for enumeration and over-current errors    |
 | `system`         | system    | Everything at once: CPU, RAM, disks and GPU (PSU, VRM and case-thermal stability) |
 
@@ -74,6 +75,9 @@ After the keyboard-layout question, the live system opens a full-screen menu on 
 | `L` | Live log of the current test |
 | Esc | Stop the current test (asks first; the report is still written) |
 | `R` | Saved reports: Enter opens one |
+| `W` | Wi-Fi: scan, connect (password box), disconnect |
+| `D` | Display test: full-screen colour patterns for dead pixels and backlight problems |
+| `N` | (Tests screen) Set the iperf3 server used by the network and Wi-Fi tests |
 | `K` | Change the keyboard layout |
 | `Q` | Quit to the root shell (asks first if a test is running) |
 
@@ -83,8 +87,25 @@ skipped, with the reason. The boot menu's **CTS auto-run** entries open the inte
 their profile after a 10-second countdown; any key cancels it. The destructive disk test is
 only available from the command line.
 
+### Wi-Fi
+The `wifi` test always checks that the adapter's driver and firmware loaded, that the radio is
+not switched off (rfkill), and that a scan finds access points. A very weak strongest signal
+hints at a loose antenna cable. To also measure the connection, press `W`, pick a network,
+type the password, then run the `wifi` test. With an iperf3 server set (`N` on the Tests screen),
+it measures throughput over Wi-Fi in both directions. Driver or firmware crashes in the kernel log
+fail the test.
+
+### Display (LCD) test
+Press `D`, or run `cts lcd` on the text console. It shows full-screen patterns one after another:
+black, white, red, green, blue, 50% gray, gray and colour gradients, a 1-pixel checkerboard, and a
+grid with 1-pixel borders. Look for dead or stuck pixels, backlight bleed, clouding, banding,
+flicker and missing edge pixels. Right/Space shows the next pattern, Left the previous one, and
+Esc quits. The test draws straight into the framebuffer, so it works without any graphical
+desktop.
+
 ### Command line
 ```
+cts lcd                                   # display test (text console only)
 cts info                                  # hardware inventory
 cts list                                  # tests, and why any would be skipped
 cts run                                   # quick profile, all default tests
