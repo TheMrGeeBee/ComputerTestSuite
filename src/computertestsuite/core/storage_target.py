@@ -17,6 +17,7 @@ the partition; nothing else on it is touched.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import time
@@ -37,26 +38,70 @@ def _mounted_at(device: str) -> str | None:
     return out.splitlines()[0] if out else None
 
 
+def devices_with_label(lsblk_json: str, label: str) -> list[str]:
+    """All block devices carrying ``label``, device-mapper devices first.
+
+    When Ventoy boots a Linux ISO with VTOY_LINUX_REMOUNT, the real partition
+    (e.g. /dev/sda1) is held by device-mapper and cannot be mounted, but Ventoy
+    exposes the same filesystem as a dm device (/dev/mapper/sda1). Both carry
+    the label, and /dev/disk/by-label may point at either one.
+    """
+    try:
+        data = json.loads(lsblk_json)
+    except json.JSONDecodeError:
+        return []
+    found: list[tuple[int, str]] = []
+
+    def walk(node: dict) -> None:
+        if node.get("label") == label and node.get("path"):
+            found.append((0 if node.get("type") == "dm" else 1, node["path"]))
+        for child in node.get("children") or []:
+            walk(child)
+
+    for dev in data.get("blockdevices", []):
+        walk(dev)
+    seen: set[str] = set()
+    out = []
+    for _, path in sorted(found):
+        if path not in seen:
+            seen.add(path)
+            out.append(path)
+    return out
+
+
+def _first_error_line(output: str, fallback: str) -> str:
+    for line in output.strip().splitlines():
+        if line.strip() and not line.lstrip().startswith("dmesg(1)"):
+            return line.strip()
+    return fallback
+
+
 def _mount_by_label(label: str) -> tuple[Path | None, str]:
-    """Find the partition with ``label``, mounting it if needed.
+    """Find the filesystem with ``label``, mounting it if needed.
 
     Returns (mount point or None, error text). Error text is '' when the label does not exist.
     """
-    dev = Path("/dev/disk/by-label") / label
-    if not dev.exists():
-        return None, ""
-    real = str(dev.resolve())
-    target = _mounted_at(real)
-    if target:
-        return Path(target), ""
+    devices = devices_with_label(proc.capture(["lsblk", "-J", "-o", "PATH,TYPE,LABEL"]), label)
+    if not devices:
+        by_label = Path("/dev/disk/by-label") / label
+        if not by_label.exists():
+            return None, ""
+        devices = [str(by_label.resolve())]
+    for dev in devices:
+        target = _mounted_at(dev)
+        if target:
+            return Path(target), ""
     if os.geteuid() != 0:
         return None, "not root, cannot mount"
     mp = MOUNT_ROOT / label.lower()
     mp.mkdir(parents=True, exist_ok=True)
-    r = proc.run(["mount", real, str(mp)], timeout=30)
-    if r.returncode != 0:
-        return None, r.output.strip().splitlines()[-1] if r.output.strip() else f"mount exit {r.returncode}"
-    return mp, ""
+    errors = []
+    for dev in devices:
+        r = proc.run(["mount", dev, str(mp)], timeout=30)
+        if r.returncode == 0:
+            return mp, ""
+        errors.append(f"{dev}: {_first_error_line(r.output, f'mount exit {r.returncode}')}")
+    return None, "; ".join(errors)
 
 
 def reports_base() -> tuple[Path, bool]:

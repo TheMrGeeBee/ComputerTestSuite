@@ -122,3 +122,17 @@ def test_runner_statuses(tmp_path):
     assert by["_boom"].status == Status.ERROR
     assert "RuntimeError" in (tmp_path / "_boom.log").read_text()
     assert by["_missing"].status == Status.SKIP
+
+
+def test_ventoy_remount_device_preferred():
+    from computertestsuite.core.storage_target import devices_with_label
+
+    # Layout seen on a laptop booted via Ventoy with VTOY_LINUX_REMOUNT=1.
+    tree = {"blockdevices": [{"path": "/dev/sda", "type": "disk", "label": None, "children": [
+        {"path": "/dev/sda1", "type": "part", "label": "Ventoy", "children": [
+            {"path": "/dev/mapper/ventoy", "type": "dm", "label": "CTS_202611"},
+            {"path": "/dev/mapper/sda1", "type": "dm", "label": "Ventoy"}]},
+        {"path": "/dev/sda2", "type": "part", "label": "VTOYEFI"}]}]}
+    assert devices_with_label(json.dumps(tree), "Ventoy") == ["/dev/mapper/sda1", "/dev/sda1"]
+    assert devices_with_label(json.dumps(tree), "CTS_REPORTS") == []
+    assert devices_with_label("not json", "Ventoy") == []

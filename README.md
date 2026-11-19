@@ -122,7 +122,7 @@ sudo dd if=out/cts-*.iso of=/dev/sdX bs=4M conv=fsync oflag=direct status=progre
 `build-iso.sh` copies `/usr/share/archiso/configs/releng` into `build/profile` and then:
 1. appends `iso/packages.extra` to the package list
 2. appends `iso/profiledef.overrides.sh` (ISO name, the `CTS_` label, file permissions)
-3. overlays `iso/airootfs/` (the `cts` launcher, motd, hostname) and appends `iso/zlogin.append` to root's `.zlogin`
+3. overlays `iso/airootfs/` (the `cts` launcher, motd, hostname, Swedish console keymap in `vconsole.conf`) and appends `iso/zlogin.append` to root's `.zlogin`
 4. copies `src/computertestsuite` to `/opt/cts`
 5. runs `scripts/patch_boot.py` to add the auto-run boot entries
 6. runs `mkarchiso` with its work dir in `/var/tmp/cts-archiso-work` (set `CTS_WORK_DIR` to change it)
