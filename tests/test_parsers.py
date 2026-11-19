@@ -240,6 +240,27 @@ def test_selftest_running_and_verdicts():
     assert selftest_signature({}) is None
 
 
+def test_selftest_without_standard_log():
+    """SATA SSDs that keep no standard self-test log: the extended log, then the execution status."""
+    from computertestsuite.suites.storage import (selftest_exec_verdict, selftest_log_args, selftest_signature,
+                                                  selftest_verdict)
+
+    ext = {"ata_smart_self_test_log": {"standard": {"revision": 1, "count": 0},
+                                       "extended": {"table": [{"status": {"value": 0, "passed": True,
+                                                                          "string": "Completed without error"}}]}}}
+    assert selftest_signature(ext) is not None
+    assert selftest_verdict(ext) == (Status.PASS, "Completed without error")
+    assert selftest_log_args("/dev/sda") == ["-l", "selftest", "-l", "xselftest"]
+    assert selftest_log_args("/dev/nvme0n1") == ["-l", "selftest"]
+
+    def status(value, text=""):
+        return {"ata_smart_data": {"self_test": {"status": {"value": value, "string": text}}}}
+    assert selftest_exec_verdict(status(0, "completed without error")) == (Status.PASS, "completed without error")
+    assert selftest_exec_verdict(status(0x10))[0] == Status.WARN   # aborted by host
+    assert selftest_exec_verdict(status(0x73))[0] == Status.FAIL   # read failure, 30% remaining
+    assert selftest_exec_verdict({}) == (None, "")
+
+
 def test_selftest_verdict_ata():
     from computertestsuite.suites.storage import selftest_verdict
 

@@ -91,10 +91,34 @@ NVME_SELFTEST_FAILED = {5, 6, 7}
 
 def selftest_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Self-test log entries, newest first (ATA or NVMe)."""
-    table = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table")
+    ata = data.get("ata_smart_self_test_log", {})
+    table = ata.get("standard", {}).get("table") or ata.get("extended", {}).get("table")
     if table is None:
         table = data.get("nvme_self_test_log", {}).get("table")
     return list(table or [])
+
+
+def selftest_log_args(path: str) -> list[str]:
+    """smartctl options that read the self-test log. Some SATA SSDs only keep the extended (GP) log."""
+    return ["-l", "selftest"] if "nvme" in path else ["-l", "selftest", "-l", "xselftest"]
+
+
+# ATA self-test execution status (upper nibble), kept by the drive even without a self-test log:
+# 0 completed without error, 1 aborted by host, 2 interrupted by reset, 3-8 failed, 15 running.
+ATA_EXEC_ABORTED = {1, 2}
+
+
+def selftest_exec_verdict(data: dict[str, Any]) -> tuple[Status | None, str]:
+    """Result of the last ATA self-test from the drive's execution status (None if not reported)."""
+    st = data.get("ata_smart_data", {}).get("self_test", {}).get("status", {})
+    if not st or "value" not in st:
+        return None, ""
+    code, text = int(st["value"]) >> 4, st.get("string", "")
+    if code == 0:
+        return Status.PASS, text or "completed without error"
+    if code in ATA_EXEC_ABORTED or code == 0xF:
+        return Status.WARN, text
+    return Status.FAIL, text
 
 
 def selftest_signature(data: dict[str, Any]) -> tuple[int, str] | None:
@@ -166,18 +190,19 @@ class StorageSmart(StressTest):
             if temp is not None:
                 result.metrics[f"{d.path}.temp_c"] = temp
             if run_selftest and data.get("smart_support", {}).get("enabled", bool(data.get("nvme_smart_health_information_log"))):
-                before[d.path] = selftest_signature(smartctl_json(["-l", "selftest", d.path]))
+                before[d.path] = selftest_signature(smartctl_json([*selftest_log_args(d.path), d.path]))
                 r = proc.run(["smartctl", "-t", "short", d.path], timeout=60, log=log)
                 if r.returncode == 0 or "Testing has begun" in r.output or "Self-test has begun" in r.output:
                     started.append(d)
         t0 = time.monotonic()
         deadline = t0 + 12 * 60
         pending = list(started)
+        seen_running: set[str] = set()
         while pending and time.monotonic() < deadline and not proc.ABORT.is_set():
             time.sleep(5 if time.monotonic() - t0 < 30 else 10)
             still = []
             for d in pending:
-                data = smartctl_json(["-c", "-l", "selftest", d.path])
+                data = smartctl_json(["-c", *selftest_log_args(d.path), d.path])
                 running = selftest_running(data)
                 op = data.get("nvme_self_test_log", {})
                 pct = op.get("current_self_test_completion_percent")
@@ -185,14 +210,21 @@ class StorageSmart(StressTest):
                      + (f" ({op.get('current_self_test_operation', {}).get('string', '')}, {pct}%)" if pct is not None else "")
                      + f" newest={selftest_signature(data)}")
                 if running:
+                    seen_running.add(d.path)
                     still.append(d)
                     continue
                 secs = int(time.monotonic() - t0)
-                if selftest_signature(data) == before.get(d.path):
-                    result.add(Status.WARN, f"{d.path}: self-test result could not be confirmed "
-                                            "(no new entry in the drive's self-test log)")
-                    continue
-                status, text = selftest_verdict(data)
+                if selftest_signature(data) != before.get(d.path):
+                    status, text = selftest_verdict(data)
+                else:
+                    # No new log entry: some SSDs keep no self-test log. If the test was seen running, the
+                    # drive's self-test execution status tells how it ended.
+                    status, text = selftest_exec_verdict(data) if d.path in seen_running else (None, "")
+                    if status is None:
+                        result.add(Status.WARN, f"{d.path}: self-test result could not be confirmed "
+                                                "(no new entry in the drive's self-test log)")
+                        continue
+                    text = f"{text} (from the drive's self-test status; it keeps no log entry)"
                 if status is Status.FAIL:
                     result.add(Status.FAIL, f"{d.path}: short self-test failed: {text}")
                 elif status is Status.WARN:
