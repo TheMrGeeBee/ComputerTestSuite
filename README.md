@@ -88,6 +88,25 @@ sudo mkfs.fat -F32 -n CTS_REPORTS /dev/sdX3
 ```
 FAT32 means the reports can be read on Windows and macOS too.
 
+### Booting from a Ventoy stick
+Copy `out/cts-*.iso` to the Ventoy partition and boot it like any other ISO.
+
+- **Protection:** disks with a `Ventoy` or `VTOYEFI` label are never written to, and the disk
+  tests skip them, so the other files on the stick are safe.
+- **Reports:** with no `CTS_REPORTS` partition, cts saves reports to a `cts-reports/` folder on the
+  Ventoy partition, next to your ISOs. Ventoy keeps that partition busy while a Linux ISO runs, so
+  you must allow remounting it once. Create `ventoy/ventoy.json` on the stick (or add the `control`
+  entry to an existing one):
+  ```json
+  {
+    "control": [
+      { "VTOY_LINUX_REMOUNT": "1" }
+    ]
+  }
+  ```
+  Ventoy marks this option as experimental. cts only creates files in `cts-reports/` and never
+  touches the ISOs. If the mount fails, cts says so and falls back to RAM.
+
 ## Building the ISO
 
 You need an Arch-based host (CachyOS works). The ISO is built from the official Arch repos

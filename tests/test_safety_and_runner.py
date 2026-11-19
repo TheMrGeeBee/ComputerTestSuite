@@ -32,6 +32,10 @@ def part(name, mount=None, label=None):
 
 BOOT_USB = dev("sdb", [part("sdb1", "/run/archiso/bootmnt", "CTS_202611"), part("sdb2", None, "CTS_REPORTS")],
                tran="usb")
+# Ventoy stick as seen from the host: the ISO-mapping device-mapper layer is absent here,
+# so only the partition labels identify it.
+VENTOY = dev("sde", [part("sde1", "/run/media/user/Ventoy", "Ventoy"), part("sde2", None, "VTOYEFI")],
+             tran="usb")
 BLANK = dev("sdc")
 SYSTEM = dev("nvme0n1", [part("nvme0n1p1", "/boot"), part("nvme0n1p2", "/")], tran="nvme")
 DATA_MOUNTED = dev("sda", [part("sda1", "/mnt/data")])
@@ -43,11 +47,12 @@ def test_parse_lsblk_skips_virtual():
 
 
 def test_boot_usb_excluded_from_default_targets():
-    disks = parse_lsblk(lsblk(BOOT_USB, BLANK, SYSTEM))
+    disks = parse_lsblk(lsblk(BOOT_USB, VENTOY, BLANK, SYSTEM))
     assert [d.name for d in disk_targets(disks)] == ["sdc", "nvme0n1"]
 
 
 @pytest.mark.parametrize("d,allowed", [(BOOT_USB, False), (SYSTEM, False), (DATA_MOUNTED, False),
+                                       (dict(VENTOY, children=[part("sde1", None, "Ventoy")]), False),
                                        (dev("sde", ro=True), False), (BLANK, True)])
 def test_destructive_refusal(d, allowed):
     disk = parse_lsblk(lsblk(d))[0]

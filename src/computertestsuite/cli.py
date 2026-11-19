@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -144,6 +145,8 @@ def cmd_run(args: argparse.Namespace, profile_override: str | None = None) -> in
     est = sum(t.estimate(ctx) for t in tests if t.available(ctx) is None)
     print(f"Estimated time: {fmt_duration(est)}   Reports: {run_dir}"
           + ("" if persistent else "  (in RAM: lost on reboot; see README for CTS_REPORTS)"))
+    if not persistent and storage_target.fallback_hint:
+        print("note: " + storage_target.fallback_hint)
 
     info = sysinfo.collect()
     started = time.time()
@@ -162,6 +165,7 @@ def cmd_run(args: argparse.Namespace, profile_override: str | None = None) -> in
     }
     rep = report.build(results, info, meta)
     _, txt = report.write(run_dir, rep)
+    os.sync()  # reports may be on a USB stick that gets pulled right after
     print()
     print(report.format_text(rep))
     print(f"Report saved to {txt}")

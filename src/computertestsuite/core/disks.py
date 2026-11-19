@@ -13,7 +13,10 @@ from . import proc
 LSBLK_COLS = "NAME,PATH,TYPE,SIZE,MODEL,SERIAL,TRAN,ROTA,RM,RO,MOUNTPOINTS,LABEL,FSTYPE"
 # Mount points that identify the live medium / the running system.
 PROTECTED_MOUNTS = {"/", "/boot", "/boot/efi", "/efi", "/run/archiso/bootmnt", "/run/archiso/cowspace"}
-PROTECTED_LABEL_PREFIXES = ("CTS_",)  # ISO label and the CTS_REPORTS partition
+# CTS_*: the ISO label and the CTS_REPORTS partition. VENTOY/VTOYEFI: a Ventoy stick the ISO
+# was booted from, which usually holds other data. Disks carrying these labels are never written
+# to and are skipped by the disk tests.
+PROTECTED_LABEL_PREFIXES = ("CTS_", "VENTOY", "VTOYEFI")
 
 
 @dataclass
@@ -46,7 +49,7 @@ class Disk:
             return f"holds the running system ({', '.join(hits)})"
         for lbl in self.labels:
             if lbl.upper().startswith(PROTECTED_LABEL_PREFIXES):
-                return f"is the CTS boot/report medium (label {lbl})"
+                return f"is a boot/report medium (label {lbl})"
         return None
 
     @property
