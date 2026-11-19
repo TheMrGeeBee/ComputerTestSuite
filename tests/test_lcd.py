@@ -59,3 +59,18 @@ def test_drawing_area():
     assert drawing_area(1920, 1080, 1920, 2160, 7680, 32, 7680 * 2160) == (1920, 1080)
     # Plain single buffer
     assert drawing_area(1366, 768, 1366, 768, 5504, 32, 5504 * 768) == (1366, 768)
+
+
+def test_write_frame_writes_everything_at_offset(tmp_path):
+    import os
+    from computertestsuite.lcd import write_frame
+
+    f = tmp_path / "fb"
+    f.write_bytes(b"\xee" * 64)
+    fd = os.open(f, os.O_RDWR)
+    try:
+        write_frame(fd, b"\x01" * 32, 16)
+    finally:
+        os.close(fd)
+    data = f.read_bytes()
+    assert data[:16] == b"\xee" * 16 and data[16:48] == b"\x01" * 32 and data[48:] == b"\xee" * 16

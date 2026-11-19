@@ -13,18 +13,20 @@ Keys: Right / Space / Enter next pattern, Left / Backspace previous, Esc / Q qui
 from __future__ import annotations
 
 import fcntl
-import mmap
 import os
 import select
 import struct
 import sys
 import termios
+import time
 import tty
 from collections.abc import Callable
 from dataclasses import dataclass
 
 FBIOGET_VSCREENINFO = 0x4600
 FBIOGET_FSCREENINFO = 0x4602
+FBIOPAN_DISPLAY = 0x4606
+LOG = "/tmp/cts-lcd.log"
 KDSETMODE = 0x4B3A
 KD_TEXT, KD_GRAPHICS = 0, 1
 
@@ -44,6 +46,41 @@ class FbInfo:
     @property
     def frame_size(self) -> int:
         return self.stride * self.yres
+
+
+def log(msg: str) -> None:
+    """Step-by-step trace, so a hang can be pinned down afterwards (cat /tmp/cts-lcd.log)."""
+    try:
+        with open(LOG, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {msg}\n")
+    except OSError:
+        pass
+
+
+def flush(fb: int) -> str:
+    """Make the driver show what was written into the framebuffer memory.
+
+    Writes through mmap bypass the driver. Drivers with Panel Self Refresh (e.g. Intel on
+    laptops) may keep showing the old image until told the screen changed; a "pan" to the
+    current position is the standard fbdev way to signal that and is harmless elsewhere.
+    """
+    try:
+        var = bytearray(160)
+        fcntl.ioctl(fb, FBIOGET_VSCREENINFO, var)
+        fcntl.ioctl(fb, FBIOPAN_DISPLAY, var)
+        return "pan ok"
+    except OSError as e:
+        return f"pan failed: {e}"
+
+
+def write_frame(fb: int, frame: bytes, offset: int) -> None:
+    """Write a frame with write(), not mmap: it goes through the driver, which then marks the
+    screen as changed. Writes into an mmap bypass it, and laptop panels with Panel Self Refresh
+    may keep showing the old image."""
+    view = memoryview(frame)
+    done = 0
+    while done < len(view):
+        done += os.pwrite(fb, view[done:], offset + done)
 
 
 def fb_info(fd: int) -> FbInfo:
@@ -177,8 +214,14 @@ def console_problem() -> str | None:
     return None
 
 
-def _read_key(fd: int) -> str:
-    """'next', 'prev', 'quit' or '' for other keys."""
+IDLE_TIMEOUT = 300  # seconds without a key: end the test (never get stuck in graphics mode)
+
+
+def _read_key(fd: int, timeout: float | None = IDLE_TIMEOUT) -> str:
+    """'next', 'prev', 'quit' or '' for other keys. 'quit' after ``timeout`` seconds idle."""
+    r, _, _ = select.select([fd], [], [], timeout)
+    if not r:
+        return "quit"
     data = os.read(fd, 1)
     if data == b"\x1b":
         r, _, _ = select.select([fd], [], [], 0.05)
@@ -206,29 +249,36 @@ def run_display_test() -> str:
     for i, (name, hint, _) in enumerate(PATTERNS, 1):
         print(f"  {i:2}. {name:17} {hint}")
     print("\nLook at the whole screen for each pattern, ideally from straight in front.")
-    print("Right / Space: next   Left: previous   Esc: quit\n\nPress any key to start...", flush=True)
+    print("Right / Space: next   Left: previous   Esc: quit")
+    print(f"If the screen seems stuck, press Esc; the test also ends by itself after {IDLE_TIMEOUT // 60} "
+          f"minutes without a key.\nA step log is written to {LOG}.")
+    print("\nPress any key to start...", flush=True)
 
     fd = sys.stdin.fileno()
     old_term = termios.tcgetattr(fd)
+    log("---- display test start")
     fb = os.open("/dev/fb0", os.O_RDWR)
     try:
         tty.setraw(fd)
-        _read_key(fd)
+        _read_key(fd, timeout=None)  # "press any key to start"
         info = fb_info(fb)
         start = info.yoffset * info.stride
-        size = info.smem_len or (start + info.frame_size)  # never map more than the device has
+        size = info.smem_len or (start + info.frame_size)
         if start + info.frame_size > size:
             raise OSError("framebuffer is smaller than the visible screen")
-        mm = mmap.mmap(fb, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+        log(f"framebuffer {info}, writing {info.frame_size} bytes at offset {start}")
         fcntl.ioctl(fd, KDSETMODE, KD_GRAPHICS)  # stop the console drawing text over the patterns
+        log("console in graphics mode")
         try:
             i, shown, drawn = 0, 0, -1
             while i < len(PATTERNS):
                 if i != drawn:
                     frame = PATTERNS[i][2](info)
-                    mm[start:start + len(frame)] = frame
+                    write_frame(fb, frame, start)
+                    log(f"drew {PATTERNS[i][0]}: {flush(fb)}")
                     drawn, shown = i, max(shown, i + 1)
                 key = _read_key(fd)
+                log(f"key: {key or 'other'}")
                 if key == "quit":
                     break
                 if key == "next":
@@ -236,9 +286,10 @@ def run_display_test() -> str:
                 elif key == "prev":
                     i = max(0, i - 1)
         finally:
-            mm[start:start + info.frame_size] = b"\0" * info.frame_size
+            write_frame(fb, b"\0" * info.frame_size, start)
+            flush(fb)
             fcntl.ioctl(fd, KDSETMODE, KD_TEXT)
-            mm.close()
+            log("console back in text mode")
     finally:
         os.close(fb)
         termios.tcsetattr(fd, termios.TCSADRAIN, old_term)
