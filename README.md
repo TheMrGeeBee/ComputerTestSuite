@@ -45,7 +45,8 @@ Each profile has its own "CTS auto-run" entry in the boot menu.
 
 ### Verdicts
 - **FAIL**: a verification or tool failure; MCE, uncorrectable EDAC or PCIe errors; disk I/O errors; a SMART health failure or growing bad-sector counters; a GPU hang; a sensor at or above its critical temperature.
-- **WARN**: thermal throttling; corrected memory or PCIe errors; a temperature within 5 °C of critical; NIC CRC errors; slow network throughput.
+- **WARN**: a temperature within 5 °C of critical (plus any thermal throttling that came with it); corrected memory or PCIe errors; NIC CRC errors; slow network throughput.
+- **Information only**: thermal throttling while the CPU stayed clear of its critical temperature. Laptops often do this by design; the report shows the number of events.
 - **SKIP**: the tool or hardware isn't present (for example no GPU driver or no iperf server).
 
 `cts run` exits with code 1 if any test failed.

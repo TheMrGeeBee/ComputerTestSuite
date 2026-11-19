@@ -321,3 +321,34 @@ def test_wifi_hardware_discovery(tmp_path):
     for k, v in {"type": "wlan", "name": "phy0", "soft": "0", "hard": "1"}.items():
         (rf / k).write_text(v + "\n")
     assert rfkill_wlan(tmp_path / "rfkill") == [{"name": "phy0", "soft": False, "hard": True}]
+
+
+def _monitor_with_temp(tmp_path, milli_c):
+    hw = tmp_path / "class" / "hwmon" / "hwmon0"
+    hw.mkdir(parents=True)
+    (hw / "name").write_text("coretemp\n")
+    (hw / "temp1_input").write_text(f"{milli_c}\n")
+    (hw / "temp1_label").write_text("Package id 0\n")
+    (hw / "temp1_crit").write_text("100000\n")
+    (tmp_path / "devices" / "system" / "cpu").mkdir(parents=True)
+    m = Monitor(root=tmp_path, kmsg="/nonexistent")
+    m.samples.append(m.sample_now())
+    return m, m.samples[0].t
+
+
+def test_throttling_alone_is_information(tmp_path):
+    m, t = _monitor_with_temp(tmp_path, 85000)  # well below critical
+    m.feed_kmsg("4,1,1,-;CPU2: Core temperature above threshold, cpu clock throttled", t=t)
+    ws = m.evaluate(t - 1, t + 1, {"throttle_core": 0}, {"throttle_core": 1378})
+    assert ws.findings == []
+    assert "1378 events" in ws.info["thermal_throttling"]
+    assert ws.kernel_events  # still recorded for the report
+
+
+def test_throttling_near_critical_is_a_warning(tmp_path):
+    m, t = _monitor_with_temp(tmp_path, 98000)  # within 5 °C of critical
+    ws = m.evaluate(t - 1, t + 1, {"throttle_core": 0}, {"throttle_core": 7100})
+    msgs = [(f.status, f.message) for f in ws.findings]
+    assert (Status.WARN, "CPU thermal throttling occurred (7100 events)") in msgs
+    assert any("near critical" in m for _, m in msgs)
+    assert "thermal_throttling" not in ws.info

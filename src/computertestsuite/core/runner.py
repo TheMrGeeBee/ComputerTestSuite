@@ -125,6 +125,7 @@ class Runner:
             res.metrics["counters"] = ws.counters
         if ws.kernel_events:
             res.metrics["kernel_events"] = ws.kernel_events
+        res.metrics.update(ws.info)
         if self.aborted:
             res.add(Status.ERROR, "aborted by user")
         self.listener.test_finished(test, res)

@@ -185,6 +185,7 @@ class WindowStats:
     freq: dict[str, float] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)  # deltas
     kernel_events: list[str] = field(default_factory=list)
+    info: dict[str, str] = field(default_factory=dict)  # notable but not a problem by itself
 
 
 class Monitor:
@@ -312,9 +313,16 @@ class Monitor:
         # Counters
         for k in after:
             ws.counters[k] = after[k] - before.get(k, 0)
+        # Throttling is how CPUs (especially in laptops) stay within limits, so on its own it is
+        # information. It is a warning only together with a temperature near or at critical,
+        # which is then the actual cooling problem.
+        hot = any(f.source == "thermal" and f.status >= Status.WARN for f in ws.findings)
         thr = ws.counters.get("throttle_core", 0) + ws.counters.get("throttle_package", 0)
         if thr > 0:
-            ws.findings.append(Finding(Status.WARN, f"CPU thermal throttling occurred ({thr} events)", "thermal"))
+            if hot:
+                ws.findings.append(Finding(Status.WARN, f"CPU thermal throttling occurred ({thr} events)", "thermal"))
+            else:
+                ws.info["thermal_throttling"] = f"{thr} events (CPU stayed clear of its critical temperature)"
         if ws.counters.get("edac_ue", 0) > 0:
             ws.findings.append(Finding(Status.FAIL, f"{ws.counters['edac_ue']} uncorrectable memory errors (EDAC)", "memory"))
         if ws.counters.get("edac_ce", 0) > 0:
@@ -328,6 +336,8 @@ class Monitor:
                 continue
             seen.add(norm)
             ws.kernel_events.append(e.message)
+            if e.category == "thermal" and not hot:
+                continue  # throttling messages: information only (see above); still listed in kernel_events
             if len(seen) <= 20:
                 ws.findings.append(Finding(e.status, f"kernel: {e.message[:200]}", e.category))
         return ws
