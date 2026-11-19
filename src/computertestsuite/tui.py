@@ -85,6 +85,17 @@ def clean(line: str) -> str:
     return _CTRL.sub("", "".join(out).replace("\t", "    "))
 
 
+def newest_log(path: str | Path) -> str:
+    """The log to show for a test: its own log, or the most recently written per-instance log
+    (``<name>.<n>.log``, e.g. one per memtester instance) when one of those is newer."""
+    base = Path(path)
+    candidates = [base] + sorted(base.parent.glob(f"{base.stem}.*.log"))
+    existing = [c for c in candidates if c.exists()]
+    if not existing:
+        return str(base)
+    return str(max(existing, key=lambda c: c.stat().st_mtime))
+
+
 def tail(path: str | Path, n: int) -> list[str]:
     try:
         with open(path, "rb") as f:
@@ -675,7 +686,7 @@ class App:
                 done = [row for row in r.rows if row.log_file]
             target = running[0] if running else (done[-1] if done else None)
             if target:
-                path = target.log_file
+                path = newest_log(target.log_file)
                 self.put(y0, x, f"Log: {target.name}  (any key closes)", curses.A_BOLD)
         if not path:
             self.put(y0, x, "No log yet (any key closes)", curses.A_BOLD)

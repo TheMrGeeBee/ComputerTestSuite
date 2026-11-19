@@ -61,7 +61,11 @@ class Network(StressTest):
         for i in ifaces:
             result.metrics[f"{i['name']}.link"] = f"{i['speed_mbps']} Mb/s" if i["speed_mbps"] else i["state"]
         if not linked:
-            result.add(Status.WARN, "no wired interface has a link (cable plugged in?)")
+            if ctx.iperf_server:
+                result.add(Status.FAIL, f"--iperf-server {ctx.iperf_server} given, but no wired interface has a link")
+            else:
+                result.add(Status.SKIP, "no network cable connected: wired network not tested")
+            return
 
         if ctx.iperf_server and proc.have("iperf3"):
             half = max(10, ctx.seconds // 2)

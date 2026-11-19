@@ -83,17 +83,49 @@ def selftest_running(data: dict[str, Any]) -> bool:
     return bool(nv and int(nv.get("value", 0)) != 0)
 
 
-def selftest_verdict(data: dict[str, Any]) -> tuple[bool | None, str]:
-    """Latest self-test result: (passed, text). passed=None if unknown."""
-    table = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table", [])
-    if table:
-        st = table[0].get("status", {})
-        return st.get("passed"), st.get("string", "")
-    table = data.get("nvme_self_test_log", {}).get("table", [])
-    if table:
-        res = table[0].get("self_test_result", {})
-        return int(res.get("value", 0)) == 0, res.get("string", "")
-    return None, "no self-test log"
+# NVMe self-test result codes (NVMe base spec, Device Self-test log):
+# 0 completed without error; 1-4, 8, 9 aborted (by command, reset, namespace removal, format,
+# unknown reason, sanitize); 5 fatal/unknown error; 6/7 completed with failed segment(s).
+NVME_SELFTEST_FAILED = {5, 6, 7}
+
+
+def selftest_entries(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Self-test log entries, newest first (ATA or NVMe)."""
+    table = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table")
+    if table is None:
+        table = data.get("nvme_self_test_log", {}).get("table")
+    return list(table or [])
+
+
+def selftest_signature(data: dict[str, Any]) -> tuple[int, str] | None:
+    """Identifies the newest log entry, to tell whether a new test result was added."""
+    entries = selftest_entries(data)
+    if not entries:
+        return None
+    return len(entries), json.dumps(entries[0], sort_keys=True)
+
+
+def selftest_verdict(data: dict[str, Any]) -> tuple[Status | None, str]:
+    """Result of the newest self-test: (PASS / WARN for aborted / FAIL, text); None if no log."""
+    entries = selftest_entries(data)
+    if not entries:
+        return None, "no self-test log"
+    e = entries[0]
+    if "self_test_result" in e:  # NVMe
+        res = e["self_test_result"]
+        value, text = int(res.get("value", 0)), res.get("string", "")
+        if value == 0:
+            return Status.PASS, text
+        return (Status.FAIL if value in NVME_SELFTEST_FAILED else Status.WARN), text
+    st = e.get("status", {})  # ATA
+    text = st.get("string", "")
+    if st.get("passed") is True:
+        return Status.PASS, text
+    if any(w in text.lower() for w in ("abort", "interrupt")):
+        return Status.WARN, text
+    if st.get("passed") is False:
+        return Status.FAIL, text
+    return Status.WARN, text or "unknown self-test result"
 
 
 def _targets(ctx: RunContext) -> list[Disk]:
@@ -117,7 +149,14 @@ class StorageSmart(StressTest):
     def run(self, ctx: RunContext, result: TestResult) -> None:
         disks = _targets(ctx)
         run_selftest = ctx.profile.name != "quick"
+        log = ctx.log_path(self.name)
+
+        def note(text: str) -> None:
+            with open(log, "a") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] {text}\n")
+
         started: list[Disk] = []
+        before: dict[str, tuple[int, str] | None] = {}
         for d in disks:
             data = smartctl_json(["-x", d.path])
             for status, msg in evaluate_smart(data, d.path):
@@ -127,24 +166,39 @@ class StorageSmart(StressTest):
             if temp is not None:
                 result.metrics[f"{d.path}.temp_c"] = temp
             if run_selftest and data.get("smart_support", {}).get("enabled", bool(data.get("nvme_smart_health_information_log"))):
-                r = proc.run(["smartctl", "-t", "short", d.path], timeout=60, log=ctx.log_path(self.name))
+                before[d.path] = selftest_signature(smartctl_json(["-l", "selftest", d.path]))
+                r = proc.run(["smartctl", "-t", "short", d.path], timeout=60, log=log)
                 if r.returncode == 0 or "Testing has begun" in r.output or "Self-test has begun" in r.output:
                     started.append(d)
-        deadline = time.monotonic() + 12 * 60
+        t0 = time.monotonic()
+        deadline = t0 + 12 * 60
         pending = list(started)
         while pending and time.monotonic() < deadline and not proc.ABORT.is_set():
-            time.sleep(10)
+            time.sleep(5 if time.monotonic() - t0 < 30 else 10)
             still = []
             for d in pending:
                 data = smartctl_json(["-c", "-l", "selftest", d.path])
-                if selftest_running(data):
+                running = selftest_running(data)
+                op = data.get("nvme_self_test_log", {})
+                pct = op.get("current_self_test_completion_percent")
+                note(f"poll {d.path}: running={running}"
+                     + (f" ({op.get('current_self_test_operation', {}).get('string', '')}, {pct}%)" if pct is not None else "")
+                     + f" newest={selftest_signature(data)}")
+                if running:
                     still.append(d)
                     continue
-                passed, text = selftest_verdict(data)
-                if passed is False:
+                secs = int(time.monotonic() - t0)
+                if selftest_signature(data) == before.get(d.path):
+                    result.add(Status.WARN, f"{d.path}: self-test result could not be confirmed "
+                                            "(no new entry in the drive's self-test log)")
+                    continue
+                status, text = selftest_verdict(data)
+                if status is Status.FAIL:
                     result.add(Status.FAIL, f"{d.path}: short self-test failed: {text}")
+                elif status is Status.WARN:
+                    result.add(Status.WARN, f"{d.path}: short self-test did not complete: {text}")
                 else:
-                    result.metrics[f"{d.path}.selftest"] = text or "completed"
+                    result.metrics[f"{d.path}.selftest"] = f"{text or 'completed'} (finished within ~{secs}s)"
             pending = still
         for d in pending:
             result.add(Status.WARN, f"{d.path}: self-test did not finish in time")

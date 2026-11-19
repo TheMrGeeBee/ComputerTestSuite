@@ -59,3 +59,16 @@ def test_listener_updates_rows():
     res.add(Status.WARN, "hot")
     lst.test_finished(FakeTest(), res)
     assert rows[0].state == "WARN" and rows[0].result is res
+
+
+def test_newest_log_prefers_recent_instance_log(tmp_path):
+    import os
+    from computertestsuite.tui import newest_log
+
+    base = tmp_path / "memory-pattern.log"
+    base.write_text("index")
+    inst = tmp_path / "memory-pattern.2.log"
+    inst.write_text("progress")
+    os.utime(base, (1, 1))
+    assert newest_log(base) == str(inst)
+    assert newest_log(tmp_path / "cpu.log") == str(tmp_path / "cpu.log")  # nothing yet

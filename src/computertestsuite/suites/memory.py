@@ -57,6 +57,9 @@ class MemoryPattern(StressTest):
         log = ctx.log_path(self.name)
         loops = ctx.profile.memory_loops
         outputs: list[proc.ProcResult] = []
+        with open(log, "a") as f:  # index for the per-instance logs
+            f.write(f"{n} memtester instances x {per_mib} MiB, {loops} loop(s), time limit {ctx.seconds}s\n")
+            f.write("".join(f"  instance {i}: {self.name}.{i}.log\n" for i in range(n)))
 
         def worker(i: int) -> None:
             outputs.append(proc.run(["memtester", f"{per_mib}M", str(loops)], timeout=ctx.seconds,
@@ -79,6 +82,10 @@ class MemoryPattern(StressTest):
                 # memtester exit bits: 1=error alloc/lock, 2=stuck address, 4=other test failed
                 status = Status.FAIL if r.returncode & 0x6 else Status.ERROR
                 result.add(status, f"memtester exited with {r.returncode}")
+        with open(log, "a") as f:
+            for i, r in enumerate(outputs):
+                state = "time limit reached" if r.timed_out else ("stopped" if r.aborted else f"exit {r.returncode}")
+                f.write(f"  result: {state}, {len(parse_memtester(r.output))} failure line(s)\n")
         if any(r.timed_out for r in outputs):
             result.metrics["note"] = "time limit reached before all loops completed (partial coverage)"
         result.metrics["loops_started"] = completed

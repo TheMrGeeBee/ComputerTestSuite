@@ -206,3 +206,50 @@ def test_storage_read_shares_budget_in_quick():
     assert StorageRead._per_disk_seconds(ctx, 20) == 30  # floor per disk
     ctx = RunContext(profile=PROFILES["standard"])
     assert StorageRead._per_disk_seconds(ctx, 6) == ctx.seconds  # standard: per disk
+
+
+# Self-test log shapes as reported by smartctl 7.5 for an NVMe drive (trimmed to the relevant part).
+NVME_ST_RUNNING = {"nvme_self_test_log": {"nsid": -1, "current_self_test_operation": {
+    "value": 1, "string": "Short self-test in progress"}, "current_self_test_completion_percent": 4}}
+
+
+def _nvme_done(result_value, result_string, poh=16542, older=()):
+    table = [{"self_test_code": {"value": 1, "string": "Short"},
+              "self_test_result": {"value": result_value, "string": result_string}, "power_on_hours": poh}]
+    return {"nvme_self_test_log": {"nsid": -1, "current_self_test_operation": {
+        "value": 0, "string": "No self-test in progress"}, "table": table + list(older)}}
+
+
+def test_selftest_running_and_verdicts():
+    from computertestsuite.suites.storage import selftest_running, selftest_signature, selftest_verdict
+
+    assert selftest_running(NVME_ST_RUNNING)
+    assert selftest_verdict(NVME_ST_RUNNING) == (None, "no self-test log")  # no table while running
+    done = _nvme_done(0, "Completed without error")
+    assert not selftest_running(done)
+    assert selftest_verdict(done) == (Status.PASS, "Completed without error")
+    assert selftest_verdict(_nvme_done(2, "Aborted: Controller Reset"))[0] == Status.WARN
+    assert selftest_verdict(_nvme_done(7, "Completed: failed segments"))[0] == Status.FAIL
+
+    # A new entry changes the signature; reading the same old log does not.
+    old = _nvme_done(0, "Completed without error", poh=100)
+    new = _nvme_done(0, "Completed without error", poh=101,
+                     older=old["nvme_self_test_log"]["table"])
+    assert selftest_signature(old) == selftest_signature(old)
+    assert selftest_signature(new) != selftest_signature(old)
+    assert selftest_signature({}) is None
+
+
+def test_selftest_verdict_ata():
+    from computertestsuite.suites.storage import selftest_verdict
+
+    def ata(passed, text):
+        st = {"value": 0, "string": text}
+        if passed is not None:
+            st["passed"] = passed
+        return {"ata_smart_self_test_log": {"standard": {"table": [{"status": st}]}}}
+
+    assert selftest_verdict(ata(True, "Completed without error"))[0] == Status.PASS
+    assert selftest_verdict(ata(False, "Completed: read failure"))[0] == Status.FAIL
+    assert selftest_verdict(ata(None, "Aborted by host"))[0] == Status.WARN
+    assert selftest_verdict(ata(False, "Interrupted (host reset)"))[0] == Status.WARN
