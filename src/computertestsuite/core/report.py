@@ -35,6 +35,7 @@ def format_text(report: dict[str, Any]) -> str:
         f" Started : {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(meta.get('started', 0)))}",
         f" Duration: {fmt_duration(meta.get('finished', 0) - meta.get('started', 0))}",
         f" Profile : {meta.get('profile')}   per-test duration: {fmt_duration(meta.get('test_seconds', 0))}",
+        f" Version : ComputerTestSuite {meta.get('version', '?')}",
     ]
     if meta.get("aborted"):
         lines.append(" NOTE    : run was aborted by the user")

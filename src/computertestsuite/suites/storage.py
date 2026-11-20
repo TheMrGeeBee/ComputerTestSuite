@@ -200,6 +200,53 @@ def format_life(life: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+# SATA SSD attributes whose *normalized* value is the % of spare (reserve) blocks left.
+ATA_SPARE_LEFT_ATTRS = {
+    179: "Used_Rsvd_Blk_Cnt_Tot",     # Samsung
+    180: "Unused_Rsvd_Blk_Cnt_Tot",   # Samsung, Crucial / Micron
+    232: "Available_Reservd_Space",   # Intel
+    170: "Available_Reservd_Space",   # Intel (older)
+}
+DATA_LOSS_COUNTERS = ("Reported_Uncorrect", "Current_Pending_Sector", "Offline_Uncorrectable", "media_errors")
+
+
+def is_ssd(data: dict[str, Any]) -> bool:
+    return data.get("rotation_rate") == 0 or "nvme_smart_health_information_log" in data
+
+
+def spare_left_pct(data: dict[str, Any]) -> int | None:
+    for a in data.get("ata_smart_attributes", {}).get("table", []):
+        if ATA_SPARE_LEFT_ATTRS.get(a.get("id")) == a.get("name") and a.get("value") is not None:
+            return min(int(a["value"]), 100)
+    nv = data.get("nvme_smart_health_information_log") or {}
+    return nv.get("available_spare")
+
+
+def explain_counter(data: dict[str, Any], counters: dict[str, int], name: str, val: int) -> str:
+    """What a non-zero error counter means for this drive, in plain words."""
+    if name in ("Reallocated_Sector_Ct", "Reallocated_Event_Count"):
+        no_loss = not any(counters.get(c) for c in DATA_LOSS_COUNTERS)
+        if is_ssd(data):
+            spare = spare_left_pct(data)
+            text = f"{val} flash blocks failed and were replaced from spare blocks"
+            if spare is not None:
+                text += f" ({spare}% of the spare left)"
+        else:
+            text = f"{val} sectors on the disk surface went bad and were replaced from spare sectors"
+        if no_loss:
+            text += ", no data lost"
+        return text + (": run the test again in a few weeks; if this number grows, replace the drive"
+                       if is_ssd(data) else
+                       ": the surface is wearing; back up, and replace the disk if this number grows")
+    if name == "Current_Pending_Sector":
+        return f"{val} sectors cannot be read and wait to be replaced: data in them may be lost"
+    if name in ("Reported_Uncorrect", "Offline_Uncorrectable"):
+        return f"{val} read errors the drive could not correct: data was lost at some point"
+    if name == "media_errors":
+        return f"{val} reads the drive could not correct: data was lost at some point"
+    return f"{name} is not zero"
+
+
 def evaluate_smart(data: dict[str, Any], dev: str) -> list[tuple[Status, str]]:
     out: list[tuple[Status, str]] = []
     if not data:
@@ -207,11 +254,12 @@ def evaluate_smart(data: dict[str, Any], dev: str) -> list[tuple[Status, str]]:
     status = data.get("smart_status")
     if status is not None and status.get("passed") is False:
         out.append((Status.FAIL, f"{dev}: SMART overall health FAILED"))
-    for name, val in smart_counters(data).items():
+    counters = smart_counters(data)
+    for name, val in counters.items():
         if name == "critical_warning" and val:
             out.append((Status.FAIL, f"{dev}: NVMe critical warning flags 0x{val:02x}"))
-        elif val:
-            out.append((Status.WARN, f"{dev}: {name} = {val}"))
+        elif val and not (name == "Reallocated_Event_Count" and counters.get("Reallocated_Sector_Ct")):
+            out.append((Status.WARN, f"{dev}: {explain_counter(data, counters, name, val)} ({name} = {val})"))
     nv = data.get("nvme_smart_health_information_log") or {}
     wear = drive_life(data).get("wear_used_pct")
     if wear is not None and wear >= WEAR_WARN_PCT:

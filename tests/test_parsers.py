@@ -166,7 +166,8 @@ def test_smart_ata_failing():
 def test_smart_nvme():
     data = json.loads((FIX / "smart_nvme.json").read_text())
     res = evaluate_smart(data, "/dev/nvme0n1")
-    assert res == [(Status.WARN, "/dev/nvme0n1: media_errors = 2")]
+    assert res == [(Status.WARN, "/dev/nvme0n1: 2 reads the drive could not correct: data was lost at some point "
+                                 "(media_errors = 2)")]
     assert not selftest_running(data)
 
 
@@ -495,3 +496,22 @@ def test_throttling_near_critical_is_a_warning(tmp_path):
     assert (Status.WARN, "CPU thermal throttling occurred (7100 events)") in msgs
     assert any("near critical" in m for _, m in msgs)
     assert "thermal_throttling" not in ws.info
+
+
+def test_retired_ssd_blocks_are_explained():
+    # Samsung 860 EVO after 2.8 years: 18 failed blocks replaced from the spare pool, nothing lost.
+    data = {"rotation_rate": 0, "smart_status": {"passed": True}, "ata_smart_attributes": {"table": [
+        _attr(5, "Reallocated_Sector_Ct", 98, 18), _attr(177, "Wear_Leveling_Count", 96, 68),
+        _attr(179, "Used_Rsvd_Blk_Cnt_Tot", 98, 18), _attr(187, "Uncorrectable_Error_Cnt", 100, 0)]}}
+    [(status, msg)] = evaluate_smart(data, "/dev/sda")
+    assert status == Status.WARN
+    assert msg.startswith("/dev/sda: 18 flash blocks failed and were replaced from spare blocks "
+                          "(98% of the spare left), no data lost: ")
+    assert msg.endswith("(Reallocated_Sector_Ct = 18)")
+    # A hard disk with unreadable sectors: no "no data lost", and the event count is not repeated.
+    data = {"rotation_rate": 5400, "ata_smart_attributes": {"table": [
+        _attr(5, "Reallocated_Sector_Ct", 100, 16), _attr(196, "Reallocated_Event_Count", 100, 16),
+        _attr(197, "Current_Pending_Sector", 100, 2)]}}
+    msgs = [m for _, m in evaluate_smart(data, "/dev/sdb")]
+    assert len(msgs) == 2 and "sectors on the disk surface" in msgs[0] and "no data lost" not in msgs[0]
+    assert "cannot be read" in msgs[1]
