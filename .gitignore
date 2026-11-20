@@ -15,3 +15,4 @@ cts-reports/
 
 # Claude directory
 .claude
+src/computertestsuite/_build_version.py

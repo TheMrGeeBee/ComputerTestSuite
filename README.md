@@ -192,20 +192,27 @@ through archiso's own `pacman.conf`.
 
 ```
 sudo pacman -S archiso                    # plus qemu-desktop edk2-ovmf for testing in a VM
-sudo scripts/build-iso.sh                 # -> out/cts-YYYY.MM.DD-x86_64.iso
+sudo scripts/build-iso.sh                 # -> out/cts-<version>-x86_64.iso, e.g. cts-1.2.0-x86_64.iso
 scripts/run-qemu.sh                       # boot it in QEMU (UEFI); `scripts/run-qemu.sh bios` for BIOS
 sudo dd if=out/cts-*.iso of=/dev/sdX bs=4M conv=fsync oflag=direct status=progress
 ```
 
 `build-iso.sh` copies `/usr/share/archiso/configs/releng` into `build/profile` and then:
 1. appends `iso/packages.extra` to the package list
-2. appends `iso/profiledef.overrides.sh` (ISO name, the `CTS_` label, file permissions)
+2. appends `iso/profiledef.overrides.sh` (ISO name, the `CTS_` label, file permissions) and
+   the version, taken from the latest git tag
 3. overlays `iso/airootfs/` (the `cts` launcher, motd, hostname, Swedish console keymap in `vconsole.conf`) and appends `iso/zlogin.append` to root's `.zlogin`
-4. copies `src/computertestsuite` to `/opt/cts`
+4. copies `src/computertestsuite` to `/opt/cts` and stamps the version into it
 5. runs `scripts/patch_boot.py` to add the auto-run boot entries
 6. runs `mkarchiso` with its work dir in `/var/tmp/cts-archiso-work` (set `CTS_WORK_DIR` to change it)
    and its own package cache in `/var/cache/cts-archiso-pkg` (`CTS_PKG_CACHE`), so packages from
    a derivative host such as CachyOS never mix with Arch's
+
+**Versions** come from git tags named `vX.Y.Z`. A build on the tagged commit is `1.2.0`; a build
+with later commits or uncommitted changes gets that added, e.g. `1.2.0+3.gabc1234.dirty`, so a
+report always shows exactly which code tested the machine. The version is shown in the menu header,
+`cts --version` and every report. To release: commit, `git tag v1.3.0`, then build (and update
+`version` in `pyproject.toml` to match).
 
 Keep the work dir outside the project. It holds a full root filesystem with `/proc` and `/sys`
 bind-mounted into it, and an IDE that indexes it can freeze.

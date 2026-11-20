@@ -73,9 +73,21 @@ echo "==> Packages"
   grep -Ev '^\s*(#|$)' "$ROOT/iso/packages.extra"
 } | grep -Ev '^\s*(#|$)' | sort -u > "$PROFILE/packages.x86_64"
 
+# Version from the latest git tag (v1.2.0 -> 1.2.0; commits after the tag and uncommitted
+# changes are added: 1.2.0+3.gabc1234.dirty). git runs as the invoking user: the repo is theirs.
+as_user=()
+[[ -n ${SUDO_USER:-} ]] && as_user=(sudo -u "$SUDO_USER")
+DESCRIBE="$("${as_user[@]}" git -C "$ROOT" describe --tags --match 'v[0-9]*' --dirty 2>/dev/null || true)"
+CTS_VERSION="$(PYTHONPATH="$ROOT/src" python3 -c \
+  'import sys; from computertestsuite import version_from_describe as v; print(v(sys.argv[1]))' "$DESCRIBE")"
+[[ -n $DESCRIBE ]] || CTS_VERSION="unknown"
+echo "==> Version $CTS_VERSION"
+
 echo "==> Profile overrides"
 printf '\n# ---- ComputerTestSuite overrides ----\n' >> "$PROFILE/profiledef.sh"
 cat "$ROOT/iso/profiledef.overrides.sh" >> "$PROFILE/profiledef.sh"
+# Name the ISO after the version (out/cts-1.2.0-x86_64.iso); '+' is avoided in file names.
+printf 'iso_version="%s"\n' "${CTS_VERSION//+/-}" >> "$PROFILE/profiledef.sh"
 
 echo "==> airootfs overlay"
 cp -a "$ROOT/iso/airootfs/." "$PROFILE/airootfs/"
@@ -86,6 +98,8 @@ mkdir -p "$PROFILE/airootfs/opt/cts"
 cp -a "$ROOT/src/computertestsuite" "$PROFILE/airootfs/opt/cts/"
 cp "$ROOT/LICENSE" "$PROFILE/airootfs/opt/cts/LICENSE"
 find "$PROFILE/airootfs/opt/cts" -name '__pycache__' -type d -prune -exec rm -rf {} +
+printf '# Written by scripts/build-iso.sh\nVERSION = "%s"\n' "$CTS_VERSION" \
+  > "$PROFILE/airootfs/opt/cts/computertestsuite/_build_version.py"
 
 echo "==> Boot menu entries"
 python3 "$ROOT/scripts/patch_boot.py" "$PROFILE"
