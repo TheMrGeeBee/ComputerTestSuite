@@ -3,7 +3,13 @@
 # Copyright (C) 2026 TheMrGeeBee
 # Build the ComputerTestSuite live ISO from archiso's "releng" profile.
 #
-#   sudo scripts/build-iso.sh            -> out/cts-YYYY.MM.DD-x86_64.iso
+#   sudo scripts/build-iso.sh            -> out/cts-<version>-x86_64.iso
+#
+# The build runs at low priority so the computer stays usable; it takes a bit longer. Limits:
+#   CTS_BUILD_CPUS  cores it may use        (default: half of them)
+#   CTS_BUILD_MEM   memory incl. file cache (default: 40%; systemd syntax, e.g. 8G)
+#   CTS_BUILD_IO    disk write speed limit  (default: 300M per second; "max" for none)
+#   CTS_BUILD_LIMITS=0 turns all of them off.
 #
 # Requires: archiso (pacman -S archiso), run as root on an Arch-based host.
 # The ISO uses the profile's own pacman.conf (official Arch repos), not the host's.
@@ -89,6 +95,38 @@ cat "$ROOT/iso/profiledef.overrides.sh" >> "$PROFILE/profiledef.sh"
 # Name the ISO after the version (out/cts-1.2.0-x86_64.iso); '+' is avoided in file names.
 printf 'iso_version="%s"\n' "${CTS_VERSION//+/-}" >> "$PROFILE/profiledef.sh"
 
+# ---- resource limits
+NCPU="$(nproc)"
+BUILD_CPUS="${CTS_BUILD_CPUS:-$(( NCPU > 2 ? NCPU / 2 : 1 ))}"
+[[ $BUILD_CPUS =~ ^[0-9]+$ ]] && (( BUILD_CPUS >= 1 )) || die "CTS_BUILD_CPUS must be a number of cores"
+(( BUILD_CPUS > NCPU )) && BUILD_CPUS=$NCPU
+BUILD_MEM="${CTS_BUILD_MEM:-40%}"
+BUILD_IO="${CTS_BUILD_IO:-300M}"
+LIMIT=()
+if [[ ${CTS_BUILD_LIMITS:-1} != 0 ]]; then
+  # The squashfs compression (xz) is the heaviest step; it starts one thread per core otherwise.
+  printf "airootfs_image_tool_options+=('-processors' '%s')\n" "$BUILD_CPUS" >> "$PROFILE/profiledef.sh"
+  mkdir -p "$WORK"
+  base=(nice -n 19 taskset -c "0-$((BUILD_CPUS - 1))")
+  # A systemd scope (cgroup) also caps memory, file cache and disk writes, which is what keeps
+  # the desktop responsive. Each set is tried first; unsupported limits are dropped.
+  scope=(systemd-run --scope --quiet --collect -p CPUWeight=idle -p "AllowedCPUs=0-$((BUILD_CPUS - 1))"
+         -p "MemoryHigh=$BUILD_MEM")
+  io=()
+  [[ $BUILD_IO != max ]] && io=(-p "IOWriteBandwidthMax=$WORK $BUILD_IO" -p "IOWriteBandwidthMax=$OUT $BUILD_IO")
+  if command -v systemd-run >/dev/null && "${scope[@]}" "${io[@]}" true 2>/dev/null; then
+    LIMIT=("${scope[@]}" "${io[@]}" "${base[@]}")
+    limits="$BUILD_CPUS of $NCPU cores, memory $BUILD_MEM, disk writes ${BUILD_IO}/s"
+  elif command -v systemd-run >/dev/null && "${scope[@]}" true 2>/dev/null; then
+    LIMIT=("${scope[@]}" "${base[@]}")
+    limits="$BUILD_CPUS of $NCPU cores, memory $BUILD_MEM (no disk write limit on this system)"
+  else
+    LIMIT=("${base[@]}")
+    limits="$BUILD_CPUS of $NCPU cores at low priority (no memory or disk limits on this system)"
+  fi
+  echo "==> Resource limits: $limits"
+fi
+
 echo "==> airootfs overlay"
 cp -a "$ROOT/iso/airootfs/." "$PROFILE/airootfs/"
 cat "$ROOT/iso/zlogin.append" >> "$PROFILE/airootfs/root/.zlogin"
@@ -105,7 +143,7 @@ echo "==> Boot menu entries"
 python3 "$ROOT/scripts/patch_boot.py" "$PROFILE"
 
 echo "==> Building ISO (this takes a while)"
-mkarchiso -v -w "$WORK" -o "$OUT" "$PROFILE"
+"${LIMIT[@]}" mkarchiso -v -w "$WORK" -o "$OUT" "$PROFILE"
 
 # Hand the output back to the invoking user.
 if [[ -n ${SUDO_UID:-} ]]; then

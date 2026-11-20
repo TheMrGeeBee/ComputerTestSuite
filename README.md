@@ -214,6 +214,12 @@ report always shows exactly which code tested the machine. The version is shown 
 `cts --version` and every report. To release: commit, `git tag v1.3.0`, then build (and update
 `version` in `pyproject.toml` to match).
 
+The build runs at low priority so the computer stays usable while it runs. By default it gets
+half of the cores, 40% of the memory (file cache included) and 300 MB/s of disk writes; xz
+compression of the root filesystem is the heaviest step. Adjust this with `CTS_BUILD_CPUS`,
+`CTS_BUILD_MEM` and `CTS_BUILD_IO`, or turn the limits off with `CTS_BUILD_LIMITS=0`, e.g.
+`sudo CTS_BUILD_CPUS=4 scripts/build-iso.sh`.
+
 Keep the work dir outside the project. It holds a full root filesystem with `/proc` and `/sys`
 bind-mounted into it, and an IDE that indexes it can freeze.
 
